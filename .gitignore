@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+backend/logx.db
+backend/storage/attachments/
+.streamlit/
