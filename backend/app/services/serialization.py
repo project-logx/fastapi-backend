@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from app.constants import TAG_CATEGORIES_BY_NODE_TYPE, TAG_TO_CATEGORY_BY_NODE_TYPE
-from app.models import Attachment, CustomTag, Trade, TradeNode
+from collections.abc import Iterable
+
+from app.constants import SLIDER_DIMENSIONS, TAG_CATEGORIES_BY_NODE_TYPE, TAG_TO_CATEGORY_BY_NODE_TYPE, normalize_category_name
+from app.models import Attachment, BehavioralProfile, CustomTag, RetrospectiveReport, Tag, TagCategory, Trade, TradeNode
 
 
 def serialize_custom_tag(tag: CustomTag) -> dict:
@@ -12,6 +14,63 @@ def serialize_custom_tag(tag: CustomTag) -> dict:
         "archived_at": tag.archived_at.isoformat() if tag.archived_at else None,
         "created_at": tag.created_at.isoformat() if tag.created_at else None,
     }
+
+
+def serialize_tag(tag: Tag) -> dict:
+    category_name = tag.category.name if tag.category else None
+    return {
+        "id": tag.id,
+        "name": tag.name,
+        "category_id": tag.category_id,
+        "category_name": category_name,
+        "tag_score": tag.tag_score,
+        "created_at": tag.created_at.isoformat() if tag.created_at else None,
+    }
+
+
+def serialize_tag_category(category: TagCategory, include_tags: bool = True) -> dict:
+    data = {
+        "id": category.id,
+        "name": category.name,
+        "category_weight": category.category_weight,
+        "created_at": category.created_at.isoformat() if category.created_at else None,
+    }
+    if include_tags:
+        ordered_tags = sorted(category.tags, key=lambda item: item.name.lower())
+        data["tags"] = [serialize_tag(tag) for tag in ordered_tags]
+    return data
+
+
+def serialize_behavioral_profile(profile: BehavioralProfile) -> dict:
+    return {
+        "id": profile.id,
+        "profile_key": profile.profile_key,
+        "user_id": profile.user_id,
+        "sweet_spot_centroid": profile.sweet_spot_centroid,
+        "danger_zone_centroid": profile.danger_zone_centroid,
+        "created_at": profile.created_at.isoformat() if profile.created_at else None,
+        "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
+    }
+
+
+def serialize_retrospective_report(report: RetrospectiveReport, include_payload: bool = True) -> dict:
+    data = {
+        "id": report.id,
+        "profile_key": report.profile_key,
+        "timeframe_days": report.timeframe_days,
+        "period_start": report.period_start.isoformat() if report.period_start else None,
+        "period_end": report.period_end.isoformat() if report.period_end else None,
+        "trade_count": report.trade_count,
+        "synthesis_model": report.synthesis_model,
+        "synthesis_source": report.synthesis_source,
+        "created_at": report.created_at.isoformat() if report.created_at else None,
+    }
+    if include_payload:
+        data["report_markdown"] = report.report_markdown
+        data["retrieval_summary"] = report.retrieval_summary or {}
+        data["feature_metrics"] = report.feature_metrics or {}
+        data["drift_metrics"] = report.drift_metrics or {}
+    return data
 
 
 def serialize_attachment(attachment: Attachment, api_prefix: str = "/api/v1") -> dict:
@@ -33,10 +92,14 @@ def _serialize_fixed_tags_by_type(node: TradeNode) -> dict[str, str]:
     tag_to_category = TAG_TO_CATEGORY_BY_NODE_TYPE.get(node.node_type, {})
 
     if isinstance(raw, dict):
+        normalized_raw = {
+            normalize_category_name(str(category)): value
+            for category, value in raw.items()
+        }
         normalized = {
-            category: str(raw[category]).strip()
+            category: str(normalized_raw[category]).strip()
             for category in categories
-            if category in raw and str(raw[category]).strip()
+            if category in normalized_raw and str(normalized_raw[category]).strip()
         }
         return normalized
 
@@ -56,6 +119,59 @@ def _serialize_fixed_tags_by_type(node: TradeNode) -> dict[str, str]:
         }
 
     return {}
+
+
+def _normalize_note(note: str | None) -> str:
+    raw = (note or "").strip()
+    return " ".join(raw.split())
+
+
+def _ordered_tag_items(node_type: str, fixed_tags: dict[str, str]) -> Iterable[tuple[str, str]]:
+    normalized_tags = {
+        normalize_category_name(str(category)): value
+        for category, value in fixed_tags.items()
+    }
+    ordered_categories = TAG_CATEGORIES_BY_NODE_TYPE.get(node_type)
+    if ordered_categories:
+        for category in ordered_categories:
+            value = normalized_tags.get(category)
+            if isinstance(value, str) and value.strip():
+                yield category, value.strip()
+        return
+
+    for category, value in sorted(normalized_tags.items()):
+        if isinstance(value, str) and value.strip():
+            yield category, value.strip()
+
+
+def serialize_node_state_for_embedding(
+    node_type: str,
+    sliders: dict[str, int] | None,
+    fixed_tags: dict[str, str] | None,
+    note: str | None,
+) -> str:
+    normalized_node_type = (node_type or "").strip().lower()
+    normalized_sliders = sliders or {}
+    normalized_fixed_tags = fixed_tags or {}
+
+    tag_payload = "|".join(
+        f"{category}:{value}"
+        for category, value in _ordered_tag_items(normalized_node_type, normalized_fixed_tags)
+    )
+    slider_payload = "|".join(
+        f"{name}:{int(normalized_sliders[name])}"
+        for name in SLIDER_DIMENSIONS
+        if name in normalized_sliders and isinstance(normalized_sliders[name], (int, float))
+    )
+
+    return " || ".join(
+        [
+            f"node_type={normalized_node_type}",
+            f"fixed_tags={tag_payload or 'none'}",
+            f"sliders={slider_payload or 'none'}",
+            f"note={_normalize_note(note) or 'none'}",
+        ]
+    )
 
 
 def serialize_node(node: TradeNode, api_prefix: str = "/api/v1") -> dict:
@@ -86,6 +202,7 @@ def serialize_trade(trade: Trade, include_nodes: bool = False, api_prefix: str =
         "entry_price": trade.entry_price,
         "exit_price": trade.exit_price,
         "pnl": trade.pnl,
+        "computed_quality_score": trade.computed_quality_score,
         "status": trade.status,
         "source_open_event": trade.source_open_event,
         "source_close_event": trade.source_close_event,

@@ -72,7 +72,7 @@ def test_docs_entry_capture_endpoint_accepts_structured_fields(client: TestClien
     node = response.json()["data"]["node"]
     assert node["fixed_tags"]["Direction"] == "Long"
     assert node["fixed_tags"]["Strategy"] == "Breakout"
-    assert node["fixed_tags"]["Market context"] == "trending day"
+    assert node["fixed_tags"]["Market"] == "trending day"
 
 
 def test_docs_exit_capture_endpoint_accepts_structured_fields(client: TestClient) -> None:
@@ -117,6 +117,6 @@ def test_docs_exit_capture_endpoint_accepts_structured_fields(client: TestClient
     assert exit_response.status_code == 200
     node = exit_response.json()["data"]["node"]
     assert node["fixed_tags"]["Execution"] == "Perfect exit"
-    assert node["fixed_tags"]["Result quality"] == "a+"
+    assert node["fixed_tags"]["Quality"] == "a+"
     assert node["fixed_tags"]["Outcome"] == "Target hit"
     assert exit_response.json()["data"]["trade"]["status"] == "complete"

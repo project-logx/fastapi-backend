@@ -217,7 +217,7 @@ def test_structured_fixed_tags_payload_is_accepted(client: TestClient) -> None:
     fixed_tags = response.json()["data"]["node"]["fixed_tags"]
     assert fixed_tags["Direction"] == "Long"
     assert fixed_tags["Strategy"] == "Breakout"
-    assert fixed_tags["Market context"] == "trending day"
+    assert fixed_tags["Market"] == "trending day"
 
 
 def test_structured_fixed_tags_unknown_category_is_rejected(client: TestClient) -> None:

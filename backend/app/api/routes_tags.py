@@ -4,12 +4,12 @@ import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_db
-from app.models import CustomTag
-from app.schemas import CustomTagCreate, CustomTagUpdate
-from app.services.serialization import serialize_custom_tag
+from app.models import CustomTag, Tag, TagCategory
+from app.schemas import CustomTagCreate, CustomTagUpdate, TagCreate
+from app.services.serialization import serialize_custom_tag, serialize_tag, serialize_tag_category
 
 
 TAG_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{3,50}$")
@@ -24,6 +24,15 @@ def _normalize_name(name: str) -> str:
     if normalized.startswith("_system_") or normalized.startswith("_fixed_"):
         raise HTTPException(status_code=422, detail="Tag name uses a reserved prefix")
     return normalized
+
+
+def _normalize_fixed_tag_name(name: str) -> tuple[str, str]:
+    clean = " ".join(name.split()).strip()
+    if not clean:
+        raise HTTPException(status_code=422, detail="Tag name must not be empty")
+    if len(clean) > 60:
+        raise HTTPException(status_code=422, detail="Tag name exceeds max length")
+    return clean, clean.lower()
 
 
 @router.post("/tags/custom")
@@ -51,6 +60,54 @@ def create_custom_tag(payload: CustomTagCreate, db: Session = Depends(get_db)) -
     db.commit()
     db.refresh(tag)
     return {"data": serialize_custom_tag(tag)}
+
+
+@router.get("/tags/categories")
+def list_tag_categories(db: Session = Depends(get_db)) -> dict:
+    categories = (
+        db.query(TagCategory)
+        .options(joinedload(TagCategory.tags))
+        .order_by(TagCategory.id.asc())
+        .all()
+    )
+    return {"data": [serialize_tag_category(category, include_tags=True) for category in categories], "meta": {"total": len(categories)}}
+
+
+@router.get("/tags")
+def list_tags(category_id: int | None = None, db: Session = Depends(get_db)) -> dict:
+    query = db.query(Tag).options(joinedload(Tag.category)).order_by(Tag.id.asc())
+    if category_id is not None:
+        query = query.filter(Tag.category_id == category_id)
+
+    rows = query.all()
+    return {"data": [serialize_tag(tag) for tag in rows], "meta": {"total": len(rows)}}
+
+
+@router.post("/tags")
+def create_tag(payload: TagCreate, db: Session = Depends(get_db)) -> dict:
+    category = db.query(TagCategory).filter(TagCategory.id == payload.category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Tag category not found")
+
+    clean_name, normalized_name = _normalize_fixed_tag_name(payload.name)
+    existing = (
+        db.query(Tag)
+        .filter(Tag.category_id == category.id, Tag.normalized_name == normalized_name)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Tag already exists in category")
+
+    row = Tag(
+        category_id=category.id,
+        name=clean_name,
+        normalized_name=normalized_name,
+        tag_score=payload.tag_score,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"data": serialize_tag(row)}
 
 
 @router.get("/tags/custom")

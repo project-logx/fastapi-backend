@@ -12,6 +12,7 @@ from app.api.deps import get_db
 from app.config import settings
 from app.database import Base
 from app.main import app
+from app.services.taxonomy import seed_fixed_taxonomy
 
 
 @pytest.fixture()
@@ -27,6 +28,13 @@ def client(tmp_path: Path) -> Generator[TestClient, None, None]:
     TestingSessionLocal = sessionmaker(bind=test_engine, autocommit=False, autoflush=False, future=True)
 
     Base.metadata.create_all(bind=test_engine)
+
+    seed_db = TestingSessionLocal()
+    try:
+        seed_fixed_taxonomy(seed_db)
+        seed_db.commit()
+    finally:
+        seed_db.close()
 
     original_attachments_dir = settings.attachments_dir
     settings.attachments_dir = attachments_dir

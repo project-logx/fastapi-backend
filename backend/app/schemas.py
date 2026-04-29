@@ -1,61 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
-
-
-class DirectionTag(str, Enum):
-    LONG = "Long"
-    SHORT = "Short"
-
-
-class StrategyTag(str, Enum):
-    BREAKOUT = "Breakout"
-    PULLBACK = "Pullback"
-    PRICE_ACTION = "Price action"
-    REVERSAL = "Reversal"
-
-
-class MarketContextTag(str, Enum):
-    TRENDING_DAY = "trending day"
-    RANGE_DAY = "Range day"
-    HIGH_VOLATILITY = "High volatility"
-    EXPIRY_DAY = "Expiry day"
-    NEWS_DRIVEN = "News driven"
-
-
-class ExecutionTag(str, Enum):
-    GOOD_RR = "good R:R"
-    POOR_RR = "Poor R:R"
-    OVERSIZED = "Oversized"
-    PERFECT_ENTRY = "Perfect entry"
-    EARLY_ENTRY = "Early entry"
-    LATE_ENTRY = "Late entry"
-    PREMATURE_EXIT = "Premature exit"
-    PERFECT_EXIT = "Perfect exit"
-    LATE_EXIT = "Late exit"
-
-
-class ResultQualityTag(str, Enum):
-    A_PLUS = "a+"
-    RULE_BREAK = "Rule break"
-    SLIPPAGE = "Slippage"
-    FOLLOWED_PLAN = "Followed plan"
-    NO_PLAN = "No plan"
-    OVERTRADED = "Overtraded"
-    RANDOM_TRADE = "Random trade"
-    IMPULSIVE = "Impulsive"
-
-
-class OutcomeTag(str, Enum):
-    TARGET_HIT = "Target hit"
-    STOP_HIT = "Stop hit"
-    PARTIAL_EXIT = "Partial exit"
-    TIME_EXIT = "Time exit"
-    MANUAL_CLOSE = "Manual close"
 
 
 class MockEntryRequest(BaseModel):
@@ -88,3 +36,44 @@ class CustomTagCreate(BaseModel):
 class CustomTagUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=3, max_length=50)
     category: str | None = Field(default=None, max_length=30)
+
+
+class TagCreate(BaseModel):
+    category_id: int = Field(gt=0)
+    name: str = Field(min_length=1, max_length=60)
+    tag_score: int = Field(ge=0, le=10)
+
+
+class TagResponse(BaseModel):
+    id: int
+    name: str
+    category_id: int
+    category_name: str | None = None
+    tag_score: int
+
+
+class TagCategoryResponse(BaseModel):
+    id: int
+    name: str
+    category_weight: int
+    tags: list[TagResponse] = Field(default_factory=list)
+
+
+class TradeNodeTagUpdate(BaseModel):
+    node_id: int = Field(gt=0)
+    fixed_tags: dict[str, str] | None = None
+    custom_tag_ids: list[int] | None = None
+    note: str | None = None
+
+
+class TradeUpdateRequest(BaseModel):
+    node_updates: list[TradeNodeTagUpdate] = Field(min_length=1, max_length=20)
+
+
+class TradeResponse(BaseModel):
+    id: int
+    symbol: str
+    product: str
+    status: str
+    pnl: float | None = None
+    computed_quality_score: float = 0.0

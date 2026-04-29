@@ -8,30 +8,128 @@ SLIDER_DIMENSIONS = [
     "Patience",
 ]
 
-FIXED_TAGS_BY_CATEGORY = {
-    "Direction": ["Long", "Short"],
-    "Strategy": ["Breakout", "Pullback", "Price action", "Reversal"],
-    "Market context": ["trending day", "Range day", "High volatility", "Expiry day", "News driven"],
-    "Execution": [
-        "good R:R",
-        "Poor R:R",
-        "Oversized",
-        "Perfect entry",
-        "Early entry",
-        "Late entry",
-        "Premature exit",
-        "Perfect exit",
-        "Late exit",
-    ],
-    "Result quality": ["a+", "Rule break", "Slippage", "Followed plan", "No plan", "Overtraded", "Random trade", "Impulsive"],
-    "Outcome": ["Target hit", "Stop hit", "Partial exit", "Time exit", "Manual close"],
+FIXED_TAXONOMY: dict[str, dict] = {
+    "Direction": {
+        "category_weight": 5,
+        "node_types": ["entry", "mid"],
+        "tags": {
+            "Long": 10,
+            "Short": 10,
+        },
+    },
+    "Strategy": {
+        "category_weight": 25,
+        "node_types": ["entry", "mid"],
+        "tags": {
+            "Breakout": 8,
+            "Pullback": 7,
+            "Price action": 7,
+            "Reversal": 6,
+        },
+    },
+    "Market": {
+        "category_weight": 15,
+        "node_types": ["entry", "mid"],
+        "tags": {
+            "trending day": 9,
+            "Range day": 7,
+            "High volatility": 6,
+            "Expiry day": 6,
+            "News driven": 5,
+        },
+    },
+    "Execution": {
+        "category_weight": 30,
+        "node_types": ["exit"],
+        "tags": {
+            "good R:R": 8,
+            "Poor R:R": 4,
+            "Oversized": 3,
+            "Perfect entry": 10,
+            "Early entry": 6,
+            "Late entry": 5,
+            "Premature exit": 4,
+            "Perfect exit": 10,
+            "Late exit": 6,
+        },
+    },
+    "Quality": {
+        "category_weight": 20,
+        "node_types": ["exit"],
+        "tags": {
+            "a+": 10,
+            "Rule break": 5,
+            "Slippage": 6,
+            "Followed plan": 9,
+            "No plan": 2,
+            "Overtraded": 3,
+            "Random trade": 1,
+            "Impulsive": 2,
+        },
+    },
+    "Outcome": {
+        "category_weight": 5,
+        "node_types": ["exit"],
+        "tags": {
+            "Target hit": 10,
+            "Stop hit": 4,
+            "Partial exit": 7,
+            "Time exit": 6,
+            "Manual close": 5,
+        },
+    },
 }
 
-TAG_CATEGORIES_BY_NODE_TYPE = {
-    "entry": ["Direction", "Strategy", "Market context"],
-    "mid": ["Direction", "Strategy", "Market context"],
-    "exit": ["Execution", "Result quality", "Outcome"],
+CATEGORY_NAME_ALIASES = {
+    "Market context": "Market",
+    "Result quality": "Quality",
 }
+
+
+def _build_category_lookup() -> dict[str, str]:
+    lookup = {name.lower(): name for name in FIXED_TAXONOMY.keys()}
+    for alias, canonical in CATEGORY_NAME_ALIASES.items():
+        lookup[alias.lower()] = canonical
+    return lookup
+
+
+CANONICAL_CATEGORY_BY_LOWER = _build_category_lookup()
+
+
+def normalize_category_name(raw_name: str) -> str:
+    cleaned = " ".join((raw_name or "").split()).strip()
+    if not cleaned:
+        return cleaned
+    return CANONICAL_CATEGORY_BY_LOWER.get(cleaned.lower(), cleaned)
+
+
+CATEGORY_WEIGHTS_BY_NAME = {
+    category: int(definition["category_weight"])
+    for category, definition in FIXED_TAXONOMY.items()
+}
+
+FIXED_TAGS_BY_CATEGORY = {
+    category: list(definition["tags"].keys())
+    for category, definition in FIXED_TAXONOMY.items()
+}
+
+FIXED_TAG_SCORES_BY_CATEGORY = {
+    category: {
+        tag: int(score)
+        for tag, score in definition["tags"].items()
+    }
+    for category, definition in FIXED_TAXONOMY.items()
+}
+
+MAX_TAG_SCORE_BY_CATEGORY = {
+    category: max(tag_scores.values()) if tag_scores else 0
+    for category, tag_scores in FIXED_TAG_SCORES_BY_CATEGORY.items()
+}
+
+TAG_CATEGORIES_BY_NODE_TYPE: dict[str, list[str]] = {"entry": [], "mid": [], "exit": []}
+for category, definition in FIXED_TAXONOMY.items():
+    for node_type in definition["node_types"]:
+        TAG_CATEGORIES_BY_NODE_TYPE[node_type].append(category)
 
 FIXED_TAG_OPTIONS_BY_NODE_TYPE = {
     node_type: {

@@ -8,14 +8,17 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import desc
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_db
 from app.config import settings
-from app.constants import ALLOWED_IMAGE_MIME_TYPES, FIXED_TAGS_BY_CATEGORY, MAX_ATTACHMENTS_PER_NODE, MAX_FILE_SIZE_BYTES, NODE_TYPES, SLIDER_DIMENSIONS, TAG_CATEGORIES_BY_NODE_TYPE, TAG_TO_CATEGORY_BY_NODE_TYPE
-from app.models import Attachment, CustomTag, Trade, TradeNode, TradeStatus
-from app.schemas import DirectionTag, ExecutionTag, MarketContextTag, OutcomeTag, ResultQualityTag, StrategyTag
-from app.services.serialization import serialize_node, serialize_trade
+from app.constants import ALLOWED_IMAGE_MIME_TYPES, FIXED_TAGS_BY_CATEGORY, MAX_ATTACHMENTS_PER_NODE, MAX_FILE_SIZE_BYTES, NODE_TYPES, SLIDER_DIMENSIONS, TAG_CATEGORIES_BY_NODE_TYPE, normalize_category_name
+from app.models import Attachment, CustomTag, TagCategory, Trade, TradeNode, TradeStatus
+from app.schemas import TradeUpdateRequest
+from app.services.embeddings import EmbeddingPayload, generate_embedding, sync_trade_embeddings_with_final_pnl, upsert_node_embedding_for_trade_node
+from app.services.intervention import evaluate_intervention
+from app.services.scoring import recompute_trade_quality_score
+from app.services.serialization import serialize_node, serialize_node_state_for_embedding, serialize_trade
 
 
 router = APIRouter(tags=["trades"])
@@ -37,7 +40,10 @@ def _parse_time(raw: str | datetime | None) -> datetime:
     if isinstance(raw, datetime):
         parsed = raw
     else:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="captured_at must be a valid ISO datetime") from exc
 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
@@ -78,17 +84,55 @@ def _slider_payload_from_scalars(
     }
 
 
-def _validate_fixed_tags(node_type: str, fixed_tags: object, tags: object) -> dict[str, str]:
+def _taxonomy_for_node_type(db: Session, node_type: str) -> tuple[list[str], dict[str, set[str]], dict[str, str]]:
     categories = TAG_CATEGORIES_BY_NODE_TYPE.get(node_type)
-    tag_to_category = TAG_TO_CATEGORY_BY_NODE_TYPE.get(node_type)
-    if categories is None or tag_to_category is None:
+    if categories is None:
         raise HTTPException(status_code=422, detail=f"Unknown node type: {node_type}")
+
+    rows = (
+        db.query(TagCategory)
+        .options(joinedload(TagCategory.tags))
+        .filter(TagCategory.name.in_(categories))
+        .all()
+    )
+    row_by_name = {row.name: row for row in rows}
+
+    allowed_tags_by_category: dict[str, set[str]] = {}
+    for category in categories:
+        row = row_by_name.get(category)
+        if row is None:
+            allowed_tags_by_category[category] = set(FIXED_TAGS_BY_CATEGORY.get(category, []))
+            continue
+        allowed_tags_by_category[category] = {tag.name for tag in row.tags}
+
+    tag_to_category = {
+        tag_name: category
+        for category, tag_names in allowed_tags_by_category.items()
+        for tag_name in tag_names
+    }
+    return categories, allowed_tags_by_category, tag_to_category
+
+
+def _validate_fixed_tags(db: Session, node_type: str, fixed_tags: object, tags: object) -> dict[str, str]:
+    categories, allowed_tags_by_category, tag_to_category = _taxonomy_for_node_type(db=db, node_type=node_type)
 
     if fixed_tags is not None:
         if not isinstance(fixed_tags, dict):
             raise HTTPException(status_code=422, detail="fixed_tags must be a JSON object of category -> tag")
 
-        unknown_categories = [category for category in fixed_tags if category not in categories]
+        normalized_input: dict[str, str] = {}
+        alias_collisions: list[str] = []
+        for raw_category, raw_value in fixed_tags.items():
+            canonical_category = normalize_category_name(str(raw_category))
+            if canonical_category in normalized_input:
+                alias_collisions.append(str(raw_category))
+                continue
+            normalized_input[canonical_category] = raw_value
+
+        if alias_collisions:
+            raise HTTPException(status_code=422, detail=f"Duplicate category aliases detected: {alias_collisions}")
+
+        unknown_categories = [category for category in normalized_input if category not in categories]
         if unknown_categories:
             raise HTTPException(status_code=422, detail=f"Unknown fixed tag category(ies): {unknown_categories}")
 
@@ -96,13 +140,13 @@ def _validate_fixed_tags(node_type: str, fixed_tags: object, tags: object) -> di
         missing_categories: list[str] = []
 
         for category in categories:
-            value = fixed_tags.get(category)
+            value = normalized_input.get(category)
             if not isinstance(value, str) or not value.strip():
                 missing_categories.append(category)
                 continue
 
             normalized = value.strip()
-            if normalized not in FIXED_TAGS_BY_CATEGORY[category]:
+            if normalized not in allowed_tags_by_category.get(category, set()):
                 raise HTTPException(status_code=422, detail=f"Tag '{normalized}' not allowed for category '{category}'")
             selected_by_category[category] = normalized
 
@@ -178,6 +222,7 @@ async def _submit_trade_node_internal(
     sliders_payload: object,
     note: str | None,
     files: list[UploadFile] | None,
+    confirm_intervention: bool,
     db: Session,
 ) -> dict:
     if node_type not in NODE_TYPES:
@@ -189,10 +234,40 @@ async def _submit_trade_node_internal(
 
     _validate_node_state(trade, node_type)
 
-    normalized_fixed_tags = _validate_fixed_tags(node_type, fixed_tags_payload, tags_payload)
+    normalized_fixed_tags = _validate_fixed_tags(db=db, node_type=node_type, fixed_tags=fixed_tags_payload, tags=tags_payload)
     linked_custom_tags = _load_custom_tags(db, custom_tag_ids_payload)
     normalized_sliders = _normalize_slider_payload(sliders_payload)
     node_time = _parse_time(captured_at)
+
+    serialized_state: str | None = None
+    embedding_payload: EmbeddingPayload | None = None
+    if node_type in {"entry", "mid"}:
+        serialized_state = serialize_node_state_for_embedding(
+            node_type=node_type,
+            sliders=normalized_sliders,
+            fixed_tags=normalized_fixed_tags,
+            note=(note or "").strip(),
+        )
+        embedding_payload = generate_embedding(serialized_state)
+
+        if not confirm_intervention:
+            intervention = evaluate_intervention(
+                db=db,
+                trade=trade,
+                node_type=node_type,
+                current_vector=embedding_payload.vector,
+                sliders=normalized_sliders,
+                note=(note or "").strip(),
+            )
+            if intervention:
+                return {
+                    "data": {
+                        "status": "intervention_required",
+                        "requires_confirmation": True,
+                        "intervention": intervention,
+                        "trade": serialize_trade(trade, include_nodes=False),
+                    }
+                }
 
     node = TradeNode(
         trade_id=trade.id,
@@ -256,12 +331,29 @@ async def _submit_trade_node_internal(
         )
         db.add(row)
 
+    if node_type in {"entry", "mid"}:
+        if not serialized_state or embedding_payload is None:
+            raise HTTPException(status_code=500, detail="Embedding payload was not prepared")
+        upsert_node_embedding_for_trade_node(
+            db=db,
+            trade=trade,
+            node=node,
+            serialized_state=serialized_state,
+            embedding_payload=embedding_payload,
+        )
+
     if node_type == "entry":
         trade.status = TradeStatus.ACTIVE.value
     elif node_type == "exit":
         trade.status = TradeStatus.COMPLETE.value
         if not trade.closed_at:
             trade.closed_at = node_time
+        sync_trade_embeddings_with_final_pnl(db=db, trade_id=trade.id, pnl=trade.pnl)
+
+    try:
+        recompute_trade_quality_score(db=db, trade=trade)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     db.commit()
     db.refresh(node)
@@ -332,6 +424,57 @@ def trade_detail(trade_id: int, db: Session = Depends(get_db)) -> dict:
     return {"data": serialize_trade(trade, include_nodes=True)}
 
 
+@router.put("/trades/{trade_id}")
+def update_trade_tags(trade_id: int, payload: TradeUpdateRequest, db: Session = Depends(get_db)) -> dict:
+    trade = db.query(Trade).filter(Trade.id == trade_id).first()
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    node_by_id = {node.id: node for node in trade.nodes}
+    for node_update in payload.node_updates:
+        node = node_by_id.get(node_update.node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail=f"Trade node {node_update.node_id} not found for trade {trade_id}")
+
+        fixed_tags_changed = node_update.fixed_tags is not None
+        note_changed = node_update.note is not None
+
+        if fixed_tags_changed:
+            node.fixed_tags = _validate_fixed_tags(db=db, node_type=node.node_type, fixed_tags=node_update.fixed_tags, tags=[])
+
+        if node_update.custom_tag_ids is not None:
+            node.custom_tags = _load_custom_tags(db, node_update.custom_tag_ids)
+
+        if note_changed:
+            node.note = (node_update.note or "").strip()
+
+        if node.node_type in {"entry", "mid"} and (fixed_tags_changed or note_changed):
+            serialized_state = serialize_node_state_for_embedding(
+                node_type=node.node_type,
+                sliders=node.sliders,
+                fixed_tags=node.fixed_tags,
+                note=node.note,
+            )
+            upsert_node_embedding_for_trade_node(
+                db=db,
+                trade=trade,
+                node=node,
+                serialized_state=serialized_state,
+            )
+
+    try:
+        recompute_trade_quality_score(db=db, trade=trade)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if trade.status == TradeStatus.COMPLETE.value:
+        sync_trade_embeddings_with_final_pnl(db=db, trade_id=trade.id, pnl=trade.pnl)
+
+    db.commit()
+    db.refresh(trade)
+    return {"data": serialize_trade(trade, include_nodes=True)}
+
+
 @router.post("/trades/{trade_id}/nodes")
 async def submit_trade_node(
     trade_id: int,
@@ -342,6 +485,7 @@ async def submit_trade_node(
     custom_tag_ids: str | None = Form(default="[]"),
     sliders: str | None = Form(default="{}"),
     note: str | None = Form(default=""),
+    confirm_intervention: bool = Form(default=False),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -360,6 +504,7 @@ async def submit_trade_node(
         sliders_payload=parsed_sliders,
         note=note,
         files=files,
+        confirm_intervention=confirm_intervention,
         db=db,
     )
 
@@ -367,9 +512,9 @@ async def submit_trade_node(
 @router.post("/trades/{trade_id}/nodes/entry", summary="Capture Entry Node (Docs-Friendly)")
 async def submit_entry_node_docs(
     trade_id: int,
-    direction: DirectionTag = Form(...),
-    strategy: StrategyTag = Form(...),
-    market_context: MarketContextTag = Form(...),
+    direction: str = Form(...),
+    strategy: str = Form(...),
+    market_context: str = Form(...),
     confidence: int = Form(5, ge=0, le=10),
     stress: int = Form(5, ge=0, le=10),
     focus: int = Form(5, ge=0, le=10),
@@ -377,14 +522,15 @@ async def submit_entry_node_docs(
     patience: int = Form(5, ge=0, le=10),
     note: str | None = Form(default=""),
     captured_at: datetime | None = Form(default=None),
+    confirm_intervention: bool = Form(default=False),
     custom_tag_ids: list[int] | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
 ) -> dict:
     fixed_tags_payload = {
-        "Direction": direction.value,
-        "Strategy": strategy.value,
-        "Market context": market_context.value,
+        "Direction": direction.strip(),
+        "Strategy": strategy.strip(),
+        "Market": market_context.strip(),
     }
     sliders_payload = _slider_payload_from_scalars(confidence, stress, focus, market_clarity, patience)
     return await _submit_trade_node_internal(
@@ -397,6 +543,7 @@ async def submit_entry_node_docs(
         sliders_payload=sliders_payload,
         note=note,
         files=files,
+        confirm_intervention=confirm_intervention,
         db=db,
     )
 
@@ -404,9 +551,9 @@ async def submit_entry_node_docs(
 @router.post("/trades/{trade_id}/nodes/mid", summary="Capture Mid Node (Docs-Friendly)")
 async def submit_mid_node_docs(
     trade_id: int,
-    direction: DirectionTag = Form(...),
-    strategy: StrategyTag = Form(...),
-    market_context: MarketContextTag = Form(...),
+    direction: str = Form(...),
+    strategy: str = Form(...),
+    market_context: str = Form(...),
     confidence: int = Form(5, ge=0, le=10),
     stress: int = Form(5, ge=0, le=10),
     focus: int = Form(5, ge=0, le=10),
@@ -414,14 +561,15 @@ async def submit_mid_node_docs(
     patience: int = Form(5, ge=0, le=10),
     note: str | None = Form(default=""),
     captured_at: datetime | None = Form(default=None),
+    confirm_intervention: bool = Form(default=False),
     custom_tag_ids: list[int] | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
 ) -> dict:
     fixed_tags_payload = {
-        "Direction": direction.value,
-        "Strategy": strategy.value,
-        "Market context": market_context.value,
+        "Direction": direction.strip(),
+        "Strategy": strategy.strip(),
+        "Market": market_context.strip(),
     }
     sliders_payload = _slider_payload_from_scalars(confidence, stress, focus, market_clarity, patience)
     return await _submit_trade_node_internal(
@@ -434,6 +582,7 @@ async def submit_mid_node_docs(
         sliders_payload=sliders_payload,
         note=note,
         files=files,
+        confirm_intervention=confirm_intervention,
         db=db,
     )
 
@@ -441,9 +590,9 @@ async def submit_mid_node_docs(
 @router.post("/trades/{trade_id}/nodes/exit", summary="Capture Exit Node (Docs-Friendly)")
 async def submit_exit_node_docs(
     trade_id: int,
-    execution: ExecutionTag = Form(...),
-    result_quality: ResultQualityTag = Form(...),
-    outcome: OutcomeTag = Form(...),
+    execution: str = Form(...),
+    result_quality: str = Form(...),
+    outcome: str = Form(...),
     confidence: int = Form(5, ge=0, le=10),
     stress: int = Form(5, ge=0, le=10),
     focus: int = Form(5, ge=0, le=10),
@@ -451,14 +600,15 @@ async def submit_exit_node_docs(
     patience: int = Form(5, ge=0, le=10),
     note: str | None = Form(default=""),
     captured_at: datetime | None = Form(default=None),
+    confirm_intervention: bool = Form(default=False),
     custom_tag_ids: list[int] | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
 ) -> dict:
     fixed_tags_payload = {
-        "Execution": execution.value,
-        "Result quality": result_quality.value,
-        "Outcome": outcome.value,
+        "Execution": execution.strip(),
+        "Quality": result_quality.strip(),
+        "Outcome": outcome.strip(),
     }
     sliders_payload = _slider_payload_from_scalars(confidence, stress, focus, market_clarity, patience)
     return await _submit_trade_node_internal(
@@ -471,5 +621,6 @@ async def submit_exit_node_docs(
         sliders_payload=sliders_payload,
         note=note,
         files=files,
+        confirm_intervention=confirm_intervention,
         db=db,
     )

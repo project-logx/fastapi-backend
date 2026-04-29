@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.config import settings
-from app.models import Attachment, CustomTag, MockEvent, NodeCustomTag, PositionState, Trade, TradeNode
+from app.models import Attachment, CustomTag, MockEvent, NodeCustomTag, PositionState, RetrospectiveReport, Trade, TradeNode
 from app.schemas import MockBatchRequest, MockEntryRequest, MockExitRequest
 from app.services.mock_ingestion import build_entry_payload, build_exit_payload, process_payload
 
@@ -107,6 +107,7 @@ def reset_mock_state(keep_tags: bool = False, db: Session = Depends(get_db)) -> 
     db.query(Attachment).delete()
     db.query(TradeNode).delete()
     db.query(Trade).delete()
+    db.query(RetrospectiveReport).delete()
     db.query(PositionState).delete()
     db.query(MockEvent).delete()
     if not keep_tags:

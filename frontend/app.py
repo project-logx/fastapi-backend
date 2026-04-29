@@ -37,6 +37,9 @@ class AppState:
     capture_config: dict[str, Any] = field(default_factory=dict)
     custom_tags: list[dict[str, Any]] = field(default_factory=list)
     expanded_journey_ids: set[int] = field(default_factory=set)
+    retrospective_reports: list[dict[str, Any]] = field(default_factory=list)
+    retrospective_payload: dict[str, Any] = field(default_factory=dict)
+    retrospective_selected_report_id: int | None = None
 
 
 state = AppState()
@@ -363,6 +366,267 @@ def refresh_journeys_panel() -> None:
                                         ui.label(attachment.get("file_name", "attachment")).classes("text-xs")
 
 
+def _set_retrospective_status(message: str) -> None:
+    label = ui_refs.get("retrospective_status")
+    if label is not None:
+        label.set_text(message)
+
+
+def _normalize_retrospective_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(raw.get("report"), dict):
+        return {
+            "report": raw.get("report", {}),
+            "retrieval": raw.get("retrieval", {}) if isinstance(raw.get("retrieval"), dict) else {},
+            "feature_importance": raw.get("feature_importance", {}) if isinstance(raw.get("feature_importance"), dict) else {},
+            "drift": raw.get("drift", {}) if isinstance(raw.get("drift"), dict) else {},
+        }
+
+    report = dict(raw)
+    return {
+        "report": report,
+        "retrieval": report.get("retrieval_summary", {}) if isinstance(report.get("retrieval_summary"), dict) else {},
+        "feature_importance": report.get("feature_metrics", {}) if isinstance(report.get("feature_metrics"), dict) else {},
+        "drift": report.get("drift_metrics", {}) if isinstance(report.get("drift_metrics"), dict) else {},
+    }
+
+
+def _drift_chart_option(drift: dict[str, Any]) -> dict[str, Any] | None:
+    series = drift.get("series") if isinstance(drift.get("series"), list) else []
+    if not series:
+        return None
+
+    labels = [str(item.get("date") or "") for item in series]
+    sweet = [float(item.get("avg_sweet_similarity") or 0.0) for item in series]
+    danger = [float(item.get("avg_danger_similarity") or 0.0) for item in series]
+    return {
+        "tooltip": {"trigger": "axis"},
+        "legend": {"data": ["Sweet", "Danger"]},
+        "xAxis": {"type": "category", "data": labels},
+        "yAxis": {"type": "value", "name": "Cosine similarity"},
+        "series": [
+            {"name": "Sweet", "type": "line", "smooth": True, "data": sweet},
+            {"name": "Danger", "type": "line", "smooth": True, "data": danger},
+        ],
+    }
+
+
+def _slider_delta_chart_option(retrieval: dict[str, Any]) -> dict[str, Any] | None:
+    raw = retrieval.get("slider_delta_averages") if isinstance(retrieval.get("slider_delta_averages"), dict) else {}
+    if not raw:
+        return None
+
+    labels = list(raw.keys())
+    values = [float(raw[name]) for name in labels]
+    return {
+        "tooltip": {"trigger": "axis"},
+        "xAxis": {"type": "category", "data": labels},
+        "yAxis": {"type": "value", "name": "Avg delta"},
+        "series": [
+            {
+                "name": "Entry->Exit Delta",
+                "type": "bar",
+                "data": values,
+            }
+        ],
+    }
+
+
+def _render_retrospective_reports_list() -> None:
+    container = ui_refs.get("retrospective_reports_container")
+    if container is None:
+        return
+
+    container.clear()
+    with container:
+        if not state.retrospective_reports:
+            ui.label("No reports yet").classes("text-sm text-gray-500")
+            return
+
+        for row in state.retrospective_reports:
+            row_id = row.get("id")
+            title = (
+                f"#{row.get('id')} | {row.get('created_at') or '-'} | "
+                f"Trades: {row.get('trade_count', 0)} | {row.get('synthesis_source', 'unknown')}"
+            )
+            with ui.card().classes("w-full p-2"):
+                ui.label(title).classes("text-xs")
+                if isinstance(row_id, int):
+                    ui.button(
+                        "Open",
+                        on_click=lambda report_id=row_id: load_retrospective_report(report_id),
+                    ).props("flat")
+
+
+def _render_retrospective_content() -> None:
+    container = ui_refs.get("retrospective_content_container")
+    if container is None:
+        return
+
+    payload = state.retrospective_payload
+    container.clear()
+    with container:
+        if not payload:
+            ui.label("Generate or open a retrospective report to view analysis.").classes("text-gray-500")
+            return
+
+        report = payload.get("report", {}) if isinstance(payload.get("report"), dict) else {}
+        retrieval = payload.get("retrieval", {}) if isinstance(payload.get("retrieval"), dict) else {}
+        feature_importance = payload.get("feature_importance", {}) if isinstance(payload.get("feature_importance"), dict) else {}
+        drift = payload.get("drift", {}) if isinstance(payload.get("drift"), dict) else {}
+
+        ui.label(
+            f"Report #{report.get('id')} | Source: {report.get('synthesis_source')} | Model: {report.get('synthesis_model')}"
+        ).classes("text-sm text-gray-600")
+        ui.label(
+            f"Timeframe: {report.get('timeframe_days')} day(s) | Trades analyzed: {report.get('trade_count')}"
+        ).classes("text-sm text-gray-600")
+
+        markdown_text = str(report.get("report_markdown") or "No markdown report generated.")
+        with ui.card().classes("w-full p-4"):
+            ui.markdown(markdown_text)
+
+        with ui.row().classes("w-full gap-4"):
+            with ui.card().classes("w-1/2 p-3"):
+                ui.label("Behavioral Drift (Sweet vs Danger)").classes("font-semibold")
+                chart_option = _drift_chart_option(drift)
+                if chart_option:
+                    ui.echart(chart_option).classes("w-full h-72")
+                else:
+                    ui.label("Not enough drift data for chart").classes("text-sm text-gray-500")
+
+            with ui.card().classes("w-1/2 p-3"):
+                ui.label("Average Slider Drift").classes("font-semibold")
+                slider_chart = _slider_delta_chart_option(retrieval)
+                if slider_chart:
+                    ui.echart(slider_chart).classes("w-full h-72")
+                else:
+                    ui.label("Not enough slider delta data for chart").classes("text-sm text-gray-500")
+
+        with ui.card().classes("w-full p-3"):
+            ui.label("Top Feature Signals").classes("font-semibold")
+            source = feature_importance.get("source")
+            ui.label(f"Source: {source}").classes("text-sm text-gray-600")
+
+            top_positive = feature_importance.get("top_positive", []) if isinstance(feature_importance.get("top_positive"), list) else []
+            top_negative = feature_importance.get("top_negative", []) if isinstance(feature_importance.get("top_negative"), list) else []
+
+            with ui.row().classes("w-full gap-6"):
+                with ui.column().classes("w-1/2 gap-1"):
+                    ui.label("Positive").classes("text-sm font-semibold")
+                    if not top_positive:
+                        ui.label("No data").classes("text-sm text-gray-500")
+                    for item in top_positive[:5]:
+                        ui.label(f"- {item.get('feature')} ({item.get('impact')})").classes("text-xs")
+
+                with ui.column().classes("w-1/2 gap-1"):
+                    ui.label("Negative").classes("text-sm font-semibold")
+                    if not top_negative:
+                        ui.label("No data").classes("text-sm text-gray-500")
+                    for item in top_negative[:5]:
+                        ui.label(f"- {item.get('feature')} ({item.get('impact')})").classes("text-xs")
+
+
+def load_retrospective_report(report_id: int) -> None:
+    status, body = api_request("GET", f"/behavior/retrospective/reports/{report_id}")
+    if status != 200 or not isinstance(body, dict):
+        show_api_error(status, body)
+        return
+
+    payload = _normalize_retrospective_payload(body.get("data", {}))
+    state.retrospective_payload = payload
+    state.retrospective_selected_report_id = report_id
+    _set_retrospective_status(f"Loaded report #{report_id}")
+    _render_retrospective_content()
+
+
+def refresh_retrospective_panel(load_selected: bool = True) -> None:
+    if "retrospective_reports_container" not in ui_refs:
+        return
+
+    profile_key_control = ui_refs.get("retrospective_profile_key")
+    profile_key = str(profile_key_control.value or "").strip() if profile_key_control is not None else ""
+
+    params: dict[str, Any] = {"limit": 15}
+    if profile_key:
+        params["profile_key"] = profile_key
+
+    status, body = api_request("GET", "/behavior/retrospective/reports", params=params)
+    if status != 200 or not isinstance(body, dict):
+        state.retrospective_reports = []
+        _render_retrospective_reports_list()
+        _set_retrospective_status("Failed to load retrospective reports")
+        show_api_error(status, body)
+        return
+
+    state.retrospective_reports = body.get("data", [])
+    _render_retrospective_reports_list()
+
+    if not load_selected:
+        _render_retrospective_content()
+        return
+
+    available_ids = {
+        int(row.get("id"))
+        for row in state.retrospective_reports
+        if row.get("id") is not None
+    }
+
+    if state.retrospective_selected_report_id not in available_ids:
+        state.retrospective_selected_report_id = next(iter(available_ids), None)
+        state.retrospective_payload = {}
+
+    if state.retrospective_selected_report_id is not None and not state.retrospective_payload:
+        load_retrospective_report(state.retrospective_selected_report_id)
+    else:
+        _render_retrospective_content()
+
+
+def generate_retrospective_report() -> None:
+    days_control = ui_refs.get("retrospective_days")
+    profile_key_control = ui_refs.get("retrospective_profile_key")
+
+    try:
+        days = int(days_control.value) if days_control is not None else 7
+    except (TypeError, ValueError):
+        days = 7
+    days = max(1, min(days, 90))
+    if days_control is not None:
+        days_control.value = days
+
+    profile_key = str(profile_key_control.value or "global").strip() if profile_key_control is not None else "global"
+    if not profile_key:
+        profile_key = "global"
+        if profile_key_control is not None:
+            profile_key_control.value = profile_key
+
+    _set_retrospective_status("Generating retrospective report...")
+    status, body = api_request(
+        "POST",
+        "/behavior/retrospective/run",
+        params={
+            "days": days,
+            "profile_key": profile_key,
+            "include_histories": "false",
+        },
+    )
+    if status != 200 or not isinstance(body, dict):
+        _set_retrospective_status("Failed to generate retrospective report")
+        show_api_error(status, body)
+        return
+
+    payload = _normalize_retrospective_payload(body.get("data", {}))
+    state.retrospective_payload = payload
+
+    report = payload.get("report", {}) if isinstance(payload.get("report"), dict) else {}
+    report_id = report.get("id")
+    if isinstance(report_id, int):
+        state.retrospective_selected_report_id = report_id
+
+    _set_retrospective_status(f"Generated report #{report.get('id')}")
+    ui.notify("Retrospective report generated", type="positive")
+    refresh_retrospective_panel(load_selected=False)
+
+
 def refresh_events_panel() -> None:
     container = ui_refs["events_container"]
     container.clear()
@@ -479,20 +743,67 @@ def refresh_capture_panel() -> None:
                     for item in state.capture_uploads
                 ]
 
-                status, body = api_request(
-                    "POST",
-                    f"/trades/{state.capture_trade_id}/nodes",
-                    data=data,
-                    files=files if files else None,
-                )
-                if status == 200:
+                def finalize_success() -> None:
                     ui.notify("Node submitted", type="positive")
                     state.capture_trade_id = None
                     state.capture_type = None
                     state.capture_uploads.clear()
                     refresh_all()
-                else:
-                    show_api_error(status, body)
+
+                def send_node(confirm_intervention: bool) -> None:
+                    payload = dict(data)
+                    payload["confirm_intervention"] = "true" if confirm_intervention else "false"
+
+                    status, body = api_request(
+                        "POST",
+                        f"/trades/{state.capture_trade_id}/nodes",
+                        data=payload,
+                        files=files if files else None,
+                    )
+
+                    if status != 200:
+                        show_api_error(status, body)
+                        return
+
+                    if not isinstance(body, dict):
+                        ui.notify("Unexpected backend response", type="warning")
+                        return
+
+                    response_data = body.get("data", {})
+                    if isinstance(response_data, dict) and response_data.get("requires_confirmation"):
+                        intervention = response_data.get("intervention") if isinstance(response_data.get("intervention"), dict) else {}
+                        similarity = intervention.get("similarity")
+                        threshold = intervention.get("threshold")
+                        avg_loss = intervention.get("average_loss")
+                        message = str(intervention.get("message") or "Potential danger pattern detected.")
+
+                        with ui.dialog() as dialog, ui.card().classes("w-[42rem] max-w-full"):
+                            ui.label("Risk Intervention Required").classes("text-lg font-semibold")
+                            if similarity is not None and threshold is not None:
+                                ui.label(f"Similarity: {similarity} | Threshold: {threshold}").classes("text-sm text-gray-600")
+                            if avg_loss is not None:
+                                ui.label(f"Average historical loss for similar states: {avg_loss}").classes("text-sm text-gray-600")
+                            ui.separator()
+                            ui.label(message).classes("text-sm")
+
+                            def proceed_anyway() -> None:
+                                dialog.close()
+                                send_node(confirm_intervention=True)
+
+                            with ui.row().classes("gap-3"):
+                                ui.button("Cancel", on_click=dialog.close)
+                                ui.button("Proceed Anyway", on_click=proceed_anyway).props("color=negative")
+
+                        dialog.open()
+                        return
+
+                    if isinstance(response_data, dict) and "node" in response_data:
+                        finalize_success()
+                        return
+
+                    ui.notify("Unexpected backend response", type="warning")
+
+                send_node(confirm_intervention=False)
 
             with ui.row().classes("gap-3"):
                 ui.button("Submit Node", on_click=submit_capture)
@@ -506,13 +817,19 @@ def clear_capture_state() -> None:
     refresh_capture_panel()
 
 
-def refresh_all(include_capture: bool = True, include_journeys: bool = True) -> None:
+def refresh_all(
+    include_capture: bool = True,
+    include_journeys: bool = True,
+    include_retrospective: bool = True,
+) -> None:
     load_capture_config()
     load_custom_tags()
     refresh_custom_tags_panel()
     refresh_queue_panel()
     if include_journeys:
         refresh_journeys_panel()
+    if include_retrospective:
+        refresh_retrospective_panel(load_selected=False)
     refresh_events_panel()
     if include_capture:
         refresh_capture_panel()
@@ -523,7 +840,11 @@ def periodic_refresh() -> None:
     journey_expanded = bool(state.expanded_journey_ids)
     # Preserve in-progress capture form selections by skipping capture panel re-render.
     # Keep journeys stable while a journey is expanded to avoid auto-collapse.
-    refresh_all(include_capture=not capture_in_progress, include_journeys=not journey_expanded)
+    refresh_all(
+        include_capture=not capture_in_progress,
+        include_journeys=not journey_expanded,
+        include_retrospective=False,
+    )
 
 
 def connect_backend(show_notification: bool = True) -> None:
@@ -658,6 +979,7 @@ with ui.row().classes("w-full items-start gap-6"):
             tab_sim = ui.tab("Simulator")
             tab_queue = ui.tab("Pending Queue")
             tab_journeys = ui.tab("Journeys")
+            tab_retrospective = ui.tab("Retrospective Analysis")
             tab_events = ui.tab("Event History")
 
         with ui.tab_panels(tabs, value=tab_sim).classes("w-full"):
@@ -696,6 +1018,30 @@ with ui.row().classes("w-full items-start gap-6"):
             with ui.tab_panel(tab_journeys):
                 ui.label("Completed Journeys").classes("text-lg font-semibold")
                 ui_refs["journeys_container"] = ui.column().classes("w-full gap-2")
+
+            with ui.tab_panel(tab_retrospective):
+                ui.label("Retrospective Analysis").classes("text-lg font-semibold")
+                with ui.row().classes("items-end gap-3 w-full"):
+                    ui_refs["retrospective_days"] = ui.number(
+                        "Timeframe (days)",
+                        value=7,
+                        min=1,
+                        max=90,
+                        step=1,
+                    ).classes("w-40")
+                    ui_refs["retrospective_profile_key"] = ui.input("Profile key", value="global").classes("w-56")
+                    ui.button("Generate Report", on_click=generate_retrospective_report)
+                    ui.button("Refresh Reports", on_click=lambda: refresh_retrospective_panel(load_selected=True))
+
+                ui_refs["retrospective_status"] = ui.label("No retrospective report loaded").classes("text-sm text-gray-600")
+
+                with ui.row().classes("w-full gap-4"):
+                    with ui.column().classes("w-80 gap-2"):
+                        ui.label("Saved Reports").classes("text-md font-semibold")
+                        ui_refs["retrospective_reports_container"] = ui.column().classes("w-full gap-2")
+
+                    with ui.column().classes("flex-1 gap-2"):
+                        ui_refs["retrospective_content_container"] = ui.column().classes("w-full gap-3")
 
             with ui.tab_panel(tab_events):
                 ui.label("Mock Event History").classes("text-lg font-semibold")
