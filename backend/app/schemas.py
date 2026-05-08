@@ -77,3 +77,41 @@ class TradeResponse(BaseModel):
     status: str
     pnl: float | None = None
     computed_quality_score: float = 0.0
+
+
+class UserSignupRequest(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    phonenumber: str = Field(min_length=3, max_length=50)
+    email: str = Field(min_length=5, max_length=100)
+    password: str = Field(min_length=6, max_length=128)
+
+
+class UserLoginRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=100)
+    password: str = Field(min_length=6, max_length=128)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+class UserPublic(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    phonenumber: str
+    email: str
+
+
+class UserResponse(BaseModel):
+    data: UserPublic
+
+class NewPasswordRequest(BaseModel):
+    token: str = Field(min_length=5, max_length=100)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=100)
+

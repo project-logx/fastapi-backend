@@ -12,6 +12,7 @@ from app.api.routes_mock import router as mock_router
 from app.api.routes_retrospective import router as retrospective_router
 from app.api.routes_tags import router as tags_router
 from app.api.routes_trades import router as trades_router
+from app.api.routes_auth import router as auth_router
 from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.services.schema_migrations import apply_lightweight_migrations
@@ -51,3 +52,4 @@ app.include_router(journeys_router, prefix=settings.api_prefix)
 app.include_router(attachments_router, prefix=settings.api_prefix)
 app.include_router(behavior_router, prefix=settings.api_prefix)
 app.include_router(retrospective_router, prefix=settings.api_prefix)
+app.include_router(auth_router, prefix=settings.api_prefix)
