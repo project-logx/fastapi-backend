@@ -155,7 +155,7 @@ For `entry` and `mid` node capture requests:
 
 LLM integration:
 
-- Intervention generation uses OpenAI Chat Completions with model default `gpt-4.1-mini`.
+- Intervention generation uses OpenAI Chat Completions with model default `gpt-4.1-nano`.
 - Provide `OPENAI_API_KEY` via env. If unavailable/error, backend falls back to deterministic templated message.
 
 ## Phase 4 (Retrospective RAG Engine)

@@ -3,6 +3,26 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# Load .env file if python-dotenv is installed.
+# This allows users to place secrets in backend/.env instead of
+# exporting shell variables before every server start.
+_dotenv_loaded = False
+try:
+    from dotenv import load_dotenv
+
+    _env_path = Path(__file__).resolve().parents[1] / ".env"
+    _dotenv_loaded = load_dotenv(dotenv_path=_env_path, override=True)
+    print(f"[CONFIG] dotenv: loaded={_dotenv_loaded}, path={_env_path}, exists={_env_path.exists()}")
+except ImportError:  # pragma: no cover – python-dotenv is optional
+    print("[CONFIG] dotenv: python-dotenv NOT INSTALLED, .env file will be ignored!")
+
+# Print resolved key values at startup
+_key = os.getenv("OPENAI_API_KEY", "")
+_model = os.getenv("RETROSPECTIVE_LLM_MODEL", "gpt-4o-mini")
+_provider = os.getenv("RETROSPECTIVE_LLM_PROVIDER", "auto")
+print(f"[CONFIG] OPENAI_API_KEY present={bool(_key)}, length={len(_key)}")
+print(f"[CONFIG] RETROSPECTIVE_LLM_MODEL={_model}")
+print(f"[CONFIG] RETROSPECTIVE_LLM_PROVIDER={_provider}")
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
@@ -43,13 +63,31 @@ class Settings:
     intervention_similarity_threshold = float(os.getenv("INTERVENTION_SIMILARITY_THRESHOLD", "0.85"))
     intervention_history_match_count = int(os.getenv("INTERVENTION_HISTORY_MATCH_COUNT", "5"))
 
-    openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
-    intervention_llm_model = os.getenv("INTERVENTION_LLM_MODEL", "gpt-4.1-mini").strip()
+    # --- Dynamic properties: always read current env value ---
+    # This ensures keys set after module import (or loaded from .env) are picked up.
+
+    @property
+    def openai_api_key(self) -> str:
+        return os.getenv("OPENAI_API_KEY", "").strip()
+
+    @property
+    def openai_base_url(self) -> str:
+        return os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip()
+
+    @property
+    def intervention_llm_model(self) -> str:
+        return os.getenv("INTERVENTION_LLM_MODEL", "gpt-4o-mini").strip()
+
     intervention_llm_timeout_seconds = int(os.getenv("INTERVENTION_LLM_TIMEOUT_SECONDS", "14"))
 
-    retrospective_llm_provider = os.getenv("RETROSPECTIVE_LLM_PROVIDER", "auto").strip().lower()
-    retrospective_llm_model = os.getenv("RETROSPECTIVE_LLM_MODEL", "gpt-4.1-mini").strip()
+    @property
+    def retrospective_llm_provider(self) -> str:
+        return os.getenv("RETROSPECTIVE_LLM_PROVIDER", "auto").strip().lower()
+
+    @property
+    def retrospective_llm_model(self) -> str:
+        return os.getenv("RETROSPECTIVE_LLM_MODEL", "gpt-4o-mini").strip()
+
     retrospective_llm_timeout_seconds = int(os.getenv("RETROSPECTIVE_LLM_TIMEOUT_SECONDS", "24"))
     retrospective_default_days = int(os.getenv("RETROSPECTIVE_DEFAULT_DAYS", "7"))
     retrospective_max_trades = int(os.getenv("RETROSPECTIVE_MAX_TRADES", "250"))

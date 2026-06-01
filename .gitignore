@@ -4,3 +4,20 @@ __pycache__/
 backend/logx.db
 backend/storage/attachments/
 .streamlit/
+.env
+backend/.env
+
+# Logs and temp scripts
+*.log
+diagnose.py
+test_llm.py
+read_report.py
+
+# IDEs
+.vscode/
+.idea/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/

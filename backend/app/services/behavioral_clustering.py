@@ -239,6 +239,7 @@ def run_behavioral_clustering(
 
     profile.sweet_spot_centroid = sweet_cluster["centroid"] if sweet_cluster else []
     profile.danger_zone_centroid = danger_cluster["centroid"] if danger_cluster else []
+    db.flush()
 
     return {
         "status": "completed",

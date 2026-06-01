@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections import defaultdict
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from app.models import NodeEmbedding, RetrospectiveReport, Trade, TradeNode, Tra
 from app.services.embeddings import get_or_create_behavioral_profile
 from app.services.intervention import cosine_similarity
 from app.services.serialization import serialize_node_state_for_embedding, serialize_retrospective_report
+
+logger = logging.getLogger(__name__)
 
 
 try:
@@ -576,43 +579,64 @@ def _feature_name_to_label(name: str) -> str:
 
 
 def _openai_chat_completion(messages: list[dict[str, str]]) -> tuple[str, str, str]:
-    if not settings.openai_api_key:
+    logger.info("=== _openai_chat_completion START ===")
+    api_key = settings.openai_api_key
+    logger.info(f"  API key present: {bool(api_key)}, length: {len(api_key)}")
+    if not api_key:
+        logger.error("  OPENAI_API_KEY is empty — raising RuntimeError")
         raise RuntimeError("OPENAI_API_KEY is not configured")
 
+    model = settings.retrospective_llm_model
+    base_url = settings.openai_base_url
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    logger.info(f"  Model: {model}")
+    logger.info(f"  URL:   {url}")
+
     payload = {
-        "model": settings.retrospective_llm_model,
+        "model": model,
         "messages": messages,
         "temperature": 0.25,
         "max_tokens": 1200,
     }
 
     req = urllib_request.Request(
-        url=f"{settings.openai_base_url.rstrip('/')}/chat/completions",
+        url=url,
         data=json.dumps(payload).encode("utf-8"),
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Authorization": f"Bearer {api_key}",
         },
     )
 
+    logger.info(f"  Sending request (timeout={settings.retrospective_llm_timeout_seconds}s)...")
     try:
         with urllib_request.urlopen(req, timeout=settings.retrospective_llm_timeout_seconds) as response:
-            parsed = json.loads(response.read().decode("utf-8"))
+            raw = response.read().decode("utf-8")
+            parsed = json.loads(raw)
+            logger.info(f"  Response received, status OK")
     except urllib_error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
+        logger.error(f"  HTTP ERROR {exc.code}: {detail}")
         raise RuntimeError(f"OpenAI HTTP {exc.code}: {detail}") from exc
+    except Exception as exc:
+        logger.error(f"  REQUEST FAILED: {type(exc).__name__}: {exc}")
+        raise
 
     choices = parsed.get("choices")
     if not isinstance(choices, list) or not choices:
+        logger.error(f"  Response missing choices: {raw[:500]}")
         raise RuntimeError("OpenAI response missing choices")
 
     message = choices[0].get("message", {})
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
+        logger.error(f"  Response missing text content: {raw[:500]}")
         raise RuntimeError("OpenAI response missing text content")
 
-    return content.strip(), settings.retrospective_llm_model, "openai"
+    logger.info(f"  SUCCESS: got {len(content)} chars from {model}")
+    logger.info("=== _openai_chat_completion END ===")
+    return content.strip(), model, "openai"
 
 
 def _azure_openai_chat_completion(messages: list[dict[str, str]]) -> tuple[str, str, str]:
@@ -632,7 +656,7 @@ def _azure_openai_chat_completion(messages: list[dict[str, str]]) -> tuple[str, 
     payload = {
         "messages": messages,
         "temperature": 0.25,
-        "max_tokens": 1200,
+        "max_completion_tokens": 1200,
     }
 
     req = urllib_request.Request(
@@ -770,6 +794,9 @@ def generate_retrospective_markdown(
     feature_importance: dict[str, Any],
     drift: dict[str, Any],
 ) -> tuple[str, str, str]:
+    logger.info("=== generate_retrospective_markdown START ===")
+    logger.info(f"  histories count: {len(histories)}")
+
     messages = _synthesis_messages(
         timeframe_days=timeframe_days,
         period_start=period_start,
@@ -778,19 +805,33 @@ def generate_retrospective_markdown(
         feature_importance=feature_importance,
         drift=drift,
     )
+    logger.info(f"  messages prepared: {len(messages)} messages")
 
     provider = settings.retrospective_llm_provider
+    logger.info(f"  provider setting: '{provider}'")
     try:
         if provider == "azure_openai":
+            logger.info("  -> routing to Azure OpenAI")
             return _azure_openai_chat_completion(messages)
         if provider == "openai":
+            logger.info("  -> routing to OpenAI (explicit)")
             return _openai_chat_completion(messages)
 
+        # Auto: try OpenAI first (most common config), then Azure as fallback
+        logger.info("  -> routing to OpenAI (auto mode)")
         try:
-            return _azure_openai_chat_completion(messages)
-        except Exception:
             return _openai_chat_completion(messages)
-    except Exception:
+        except Exception as e1:
+            logger.warning(f"OpenAI retrospective generation failed: {e1}, attempting Azure fallback")
+            try:
+                return _azure_openai_chat_completion(messages)
+            except Exception as e2:
+                logger.error(f"Azure fallback also failed: {e2}")
+                raise
+    except Exception as final_err:
+        import traceback
+        err_msg = traceback.format_exc()
+        logger.error(f"Retrospective generation FAILED, using template fallback: {final_err}", exc_info=True)
         fallback = _fallback_markdown(
             timeframe_days=timeframe_days,
             period_start=period_start,
@@ -799,6 +840,7 @@ def generate_retrospective_markdown(
             feature_importance=feature_importance,
             drift=drift,
         )
+        fallback += f"\n\n## DEBUG ERROR\n```\n{err_msg}\n```\n"
         return fallback, "fallback-template", "fallback"
 
 

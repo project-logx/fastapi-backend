@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -14,6 +15,7 @@ from app.models import Attachment, CustomTag, MockEvent, NodeCustomTag, Position
 from app.schemas import MockBatchRequest, MockEntryRequest, MockExitRequest
 from app.services.mock_ingestion import build_entry_payload, build_exit_payload, process_payload
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["mock"])
 
@@ -34,12 +36,24 @@ def _timestamp(raw: datetime | None) -> datetime:
 def inject_entry(payload: MockEntryRequest, db: Session = Depends(get_db)) -> dict:
     event_id = payload.event_id or _event_id("entry")
     event_time = _timestamp(payload.timestamp)
+    symbol = payload.symbol.strip().upper()
+    product = payload.product.strip().upper()
+    
+    # Use the provided quantity as the absolute net quantity
+    position = db.query(PositionState).filter(
+        PositionState.symbol == symbol, PositionState.product == product
+    ).first()
+    current_qty = position.net_quantity if position else 0
+    new_qty = payload.quantity
+
+    logger.info(f"Injecting ENTRY event {event_id} for {symbol}: qty {payload.quantity} (net changed {current_qty} -> {new_qty})")
+
     full_payload = build_entry_payload(
         event_id=event_id,
         timestamp=event_time,
-        symbol=payload.symbol.strip().upper(),
-        product=payload.product.strip().upper(),
-        quantity=payload.quantity,
+        symbol=symbol,
+        product=product,
+        quantity=new_qty,
         average_price=payload.average_price,
     )
     result = process_payload(db, full_payload)
@@ -50,11 +64,16 @@ def inject_entry(payload: MockEntryRequest, db: Session = Depends(get_db)) -> di
 def inject_exit(payload: MockExitRequest, db: Session = Depends(get_db)) -> dict:
     event_id = payload.event_id or _event_id("exit")
     event_time = _timestamp(payload.timestamp)
+    symbol = payload.symbol.strip().upper()
+    product = payload.product.strip().upper()
+
+    logger.info(f"Injecting EXIT event {event_id} for {symbol}")
+
     full_payload = build_exit_payload(
         event_id=event_id,
         timestamp=event_time,
-        symbol=payload.symbol.strip().upper(),
-        product=payload.product.strip().upper(),
+        symbol=symbol,
+        product=product,
         average_price=payload.average_price,
         pnl=payload.pnl,
     )

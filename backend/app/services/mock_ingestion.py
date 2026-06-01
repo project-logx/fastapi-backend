@@ -5,7 +5,10 @@ from datetime import UTC, datetime
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+import logging
 from app.models import MockEvent, PositionState, Trade, TradeStatus
+
+logger = logging.getLogger(__name__)
 
 
 def utc_now() -> datetime:
@@ -195,6 +198,7 @@ def process_payload(db: Session, payload: dict) -> dict:
             )
             db.add(new_trade)
             db.flush()
+            logger.info(f"Opened new trade {new_trade.id} for {symbol} (net {net_quantity})")
             transitions.append(
                 {
                     "action": "opened",
@@ -215,6 +219,7 @@ def process_payload(db: Session, payload: dict) -> dict:
                 open_trade.pnl = pnl
                 open_trade.closed_at = event_time
                 open_trade.source_close_event = event_id
+                logger.info(f"Marked trade {open_trade.id} for {symbol} as PENDING_EXIT")
                 transitions.append(
                     {
                         "action": "pending_exit",
@@ -227,6 +232,33 @@ def process_payload(db: Session, payload: dict) -> dict:
                 )
             continue
 
+        if previous_qty != 0 and net_quantity != 0 and not flipped:
+            if net_quantity != previous_qty:
+                open_trade = _latest_open_trade(db, symbol, product)
+                if open_trade:
+                    open_trade.quantity = abs(net_quantity)
+                    open_trade.entry_price = average_price
+                    
+                    if abs(net_quantity) > abs(previous_qty):
+                        open_trade.status = TradeStatus.PENDING_ENTRY.value
+                        action = "added_to_position"
+                    else:
+                        open_trade.status = TradeStatus.PENDING_EXIT.value
+                        action = "partial_exit"
+                        
+                    logger.info(f"Trade {open_trade.id} for {symbol} {action}, qty now {abs(net_quantity)}")
+                    transitions.append(
+                        {
+                            "action": action,
+                            "trade_id": open_trade.id,
+                            "from": previous_qty,
+                            "to": net_quantity,
+                            "symbol": symbol,
+                            "product": product,
+                        }
+                    )
+            continue
+
         if flipped:
             open_trade = _latest_open_trade(db, symbol, product)
             if open_trade:
@@ -235,6 +267,7 @@ def process_payload(db: Session, payload: dict) -> dict:
                 open_trade.pnl = pnl
                 open_trade.closed_at = event_time
                 open_trade.source_close_event = event_id
+                logger.info(f"Flipped position: Marked trade {open_trade.id} for {symbol} as PENDING_EXIT")
                 transitions.append(
                     {
                         "action": "flip_pending_exit",
@@ -258,6 +291,7 @@ def process_payload(db: Session, payload: dict) -> dict:
             )
             db.add(new_trade)
             db.flush()
+            logger.info(f"Flipped position: Opened new trade {new_trade.id} for {symbol} (net {net_quantity})")
             transitions.append(
                 {
                     "action": "flip_opened",

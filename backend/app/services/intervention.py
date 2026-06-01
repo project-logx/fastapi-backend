@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from statistics import mean
 from typing import Any
@@ -12,6 +13,8 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import settings
 from app.models import NodeEmbedding, Trade
 from app.services.embeddings import get_or_create_behavioral_profile
+
+logger = logging.getLogger(__name__)
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -125,8 +128,8 @@ def _openai_chat_completion(messages: list[dict[str, str]]) -> str:
     payload = {
         "model": settings.intervention_llm_model,
         "messages": messages,
-        "temperature": 0.25,
-        "max_tokens": 220,
+        "temperature": 0.2,
+        "max_tokens": 300,
     }
     body = json.dumps(payload).encode("utf-8")
 
@@ -206,7 +209,8 @@ def generate_intervention_message(
 
     try:
         return _openai_chat_completion(messages), settings.intervention_llm_model
-    except Exception:
+    except Exception as e:
+        logger.error(f"OpenAI intervention generation failed, falling back: {e}", exc_info=True)
         return _fallback_intervention_message(similarity, threshold, avg_loss, current_note), "fallback-template"
 
 

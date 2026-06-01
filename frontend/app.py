@@ -10,10 +10,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+import logging
 from urllib.parse import urlparse
 
 import requests
 from nicegui import ui
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] FRONTEND: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_API_BASE = "http://127.0.0.1:8000/api/v1"
@@ -82,20 +86,40 @@ def _pid_alive(pid: int | None) -> bool:
         return False
 
 
+def _kill_process_on_port(port: int) -> None:
+    """Kill any process currently listening on the given port (Windows only)."""
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.split()
+                pid = int(parts[-1])
+                if pid > 0:
+                    logger.info(f"Killing stale backend process PID {pid} on port {port}")
+                    try:
+                        os.kill(pid, 9)
+                        time.sleep(0.5)
+                    except OSError:
+                        pass
+    except Exception as exc:
+        logger.warning(f"Could not check/kill process on port {port}: {exc}")
+
+
 def ensure_backend_running(api_base: str) -> tuple[bool, str]:
-    if _health_ok(api_base):
-        return True, ""
-
     is_local, host, port = _is_local_api_base(api_base)
-    if not is_local:
-        return False, "Backend unreachable. Auto-start is only supported for localhost/127.0.0.1 API URLs."
 
-    if _pid_alive(state.backend_process_pid):
-        for _ in range(20):
-            if _health_ok(api_base):
-                return True, "Local backend connected."
-            time.sleep(0.25)
-        return False, "Local backend process is running but health endpoint is not ready yet."
+    # Always kill any stale backend on the port so we boot fresh code
+    if is_local:
+        _kill_process_on_port(port)
+        time.sleep(0.3)
+
+    if not is_local:
+        if _health_ok(api_base):
+            return True, ""
+        return False, "Backend unreachable. Auto-start is only supported for localhost/127.0.0.1 API URLs."
 
     project_root = Path(__file__).resolve().parents[1]
     backend_dir = project_root / "backend"
@@ -111,25 +135,30 @@ def ensure_backend_running(api_base: str) -> tuple[bool, str]:
         backend_host,
         "--port",
         str(port),
+        "--log-level",
+        "warning",
+        "--no-access-log",
     ]
 
+    logger.info(f"Starting backend: {' '.join(command)}")
     creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     try:
         process = subprocess.Popen(
             command,
             cwd=str(project_root),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
             creationflags=creation_flags,
         )
     except OSError as exc:
         return False, f"Failed to auto-start backend: {exc}"
 
     state.backend_process_pid = process.pid
+    logger.info(f"Backend process started with PID {process.pid}")
 
     for _ in range(32):
         if _health_ok(api_base):
-            return True, f"Backend auto-started (PID {process.pid})"
+            return True, f"Backend started (PID {process.pid})"
         time.sleep(0.25)
 
     return False, "Backend process started but did not become healthy in time."
@@ -137,8 +166,12 @@ def ensure_backend_running(api_base: str) -> tuple[bool, str]:
 
 def api_request(method: str, path: str, **kwargs: Any) -> tuple[int, dict[str, Any] | str]:
     url = f"{state.api_base}{path}"
+    if method != "GET":
+        logger.info(f"API Request: {method} {path} (kwargs: {kwargs})")
     try:
         response = requests.request(method=method, url=url, timeout=20, **kwargs)
+        if method != "GET":
+            logger.info(f"API Response: {method} {path} -> Status {response.status_code}")
     except requests.RequestException as exc:
         return 0, str(exc)
 
@@ -599,6 +632,8 @@ def generate_retrospective_report() -> None:
         if profile_key_control is not None:
             profile_key_control.value = profile_key
 
+    logger.info(f"User Action: Generating retrospective report for {days} days, profile '{profile_key}'")
+
     _set_retrospective_status("Generating retrospective report...")
     status, body = api_request(
         "POST",
@@ -619,11 +654,19 @@ def generate_retrospective_report() -> None:
 
     report = payload.get("report", {}) if isinstance(payload.get("report"), dict) else {}
     report_id = report.get("id")
+    synthesis_source = report.get("synthesis_source", "unknown")
+    synthesis_model = report.get("synthesis_model", "unknown")
+    trade_count = report.get("trade_count", 0)
+    logger.info(f"Retrospective Result: report_id={report_id}, source={synthesis_source}, model={synthesis_model}, trades={trade_count}")
+
+    if synthesis_source == "fallback":
+        logger.warning("  ⚠ Report used FALLBACK template (LLM call failed). Check backend logs for error details.")
+
     if isinstance(report_id, int):
         state.retrospective_selected_report_id = report_id
 
-    _set_retrospective_status(f"Generated report #{report.get('id')}")
-    ui.notify("Retrospective report generated", type="positive")
+    _set_retrospective_status(f"Generated report #{report.get('id')} (source: {synthesis_source})")
+    ui.notify(f"Retrospective report generated (source: {synthesis_source})", type="positive" if synthesis_source != "fallback" else "warning")
     refresh_retrospective_panel(load_selected=False)
 
 
@@ -715,6 +758,7 @@ def refresh_capture_panel() -> None:
                 ui.button("Clear selected files", on_click=clear_uploads)
 
             def submit_capture() -> None:
+                logger.info(f"User Action: Submit Capture for node type '{capture_type}'")
                 missing = [category for category, control in selected_fixed_controls.items() if not control.value]
                 if missing:
                     ui.notify(f"Please select one tag for each required category: {', '.join(missing)}", type="negative")
@@ -891,6 +935,7 @@ def inject_entry_event() -> None:
         ui.notify("Entry quantity and average price must be greater than zero.", type="negative")
         return
 
+    logger.info(f"User Action: Inject Entry Event (symbol={symbol})")
     payload = {
         "symbol": symbol,
         "product": product,
@@ -919,6 +964,7 @@ def inject_exit_event() -> None:
         ui.notify("Exit average price must be greater than zero.", type="negative")
         return
 
+    logger.info("User Action: Inject Exit Event")
     payload = {
         "symbol": symbol,
         "product": product,
@@ -1055,6 +1101,21 @@ with ui.row().classes("w-full items-start gap-6"):
 connect_backend(show_notification=False)
 
 # Keep UI synced with backend events and user interactions without manual refresh.
-ui.timer(4.0, periodic_refresh)
+ui.timer(10.0, periodic_refresh)
+
+
+def _cleanup_backend() -> None:
+    """Kill the backend subprocess when the frontend exits."""
+    pid = state.backend_process_pid
+    if pid and _pid_alive(pid):
+        logger.info(f"Shutting down backend process (PID {pid})")
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
+
+
+import atexit
+atexit.register(_cleanup_backend)
 
 ui.run(title="LogX NiceGUI", port=8080, reload=False)
