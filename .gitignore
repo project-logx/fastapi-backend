@@ -4,6 +4,7 @@ __pycache__/
 backend/logx.db
 backend/storage/attachments/
 .streamlit/
+<<<<<<< HEAD
 .env
 backend/.env
 
@@ -21,3 +22,7 @@ read_report.py
 .pytest_cache/
 .coverage
 htmlcov/
+=======
+
+backend/.env
+>>>>>>> db39be6144e2da061c29837fc091172649b63a6d

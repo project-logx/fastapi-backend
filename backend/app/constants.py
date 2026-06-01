@@ -170,3 +170,158 @@ ALLOWED_IMAGE_MIME_TYPES = {
 }
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
 MAX_ATTACHMENTS_PER_NODE = 10
+
+VERIFICATION_EMAIL_HTML_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Verify your email</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f6f7fb;font-family:Arial,Helvetica,sans-serif;color:#0b0f19;">
+    <span style="display:none;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">
+        Confirm your email to finish setting up your LogX account.
+    </span>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background-color:#f6f7fb;">
+        <tr>
+            <td align="center" style="padding:32px 16px;">
+                <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="border-collapse:collapse;max-width:600px;width:100%;background-color:#ffffff;border-radius:16px;box-shadow:0 8px 24px rgba(15,23,42,0.08);">
+                    <tr>
+                        <td style="padding:32px 32px 16px 32px;border-bottom:1px solid #eef2f7;">
+                            <div style="font-size:18px;font-weight:700;letter-spacing:0.2px;">
+                                LogX
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:32px;">
+                            <h1 style="margin:0 0 12px 0;font-size:24px;line-height:1.3;">Verify your email</h1>
+                            <p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#374151;">
+                                Thanks for signing up. Please confirm your email address to activate your LogX account.
+                            </p>
+                            <div style="margin:24px 0;">
+                                <a href="{link}" style="display:inline-block;background-color:#0b0f19;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:10px;font-size:14px;font-weight:600;">
+                                    Verify email
+                                </a>
+                            </div>
+                            <p style="margin:0 0 8px 0;font-size:13px;line-height:1.6;color:#6b7280;">
+                                This link will expire in 30 minutes. If you did not create a LogX account, you can safely ignore this email.
+                            </p>
+                            <p style="margin:16px 0 0 0;font-size:12px;line-height:1.6;color:#9ca3af;word-break:break-all;">
+                                If the button does not work, copy and paste this URL into your browser:<br />
+                                <a href="{link}" style="color:#0b0f19;text-decoration:underline;">{link}</a>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:20px 32px;border-top:1px solid #eef2f7;font-size:12px;color:#9ca3af;">
+                            LogX Team · support@logxapp.in
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+
+PASSWORD_CHANGE_SUCCESS_EMAIL_HTML_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Password changed</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f6f7fb;font-family:Arial,Helvetica,sans-serif;color:#0b0f19;">
+    <span style="display:none;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">
+        Your LogX password was updated successfully.
+    </span>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background-color:#f6f7fb;">
+        <tr>
+            <td align="center" style="padding:32px 16px;">
+                <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="border-collapse:collapse;max-width:600px;width:100%;background-color:#ffffff;border-radius:16px;box-shadow:0 8px 24px rgba(15,23,42,0.08);">
+                    <tr>
+                        <td style="padding:32px 32px 16px 32px;border-bottom:1px solid #eef2f7;">
+                            <div style="font-size:18px;font-weight:700;letter-spacing:0.2px;">
+                                LogX
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:32px;">
+                            <h1 style="margin:0 0 12px 0;font-size:24px;line-height:1.3;">Password changed</h1>
+                            <p style="margin:0 0 12px 0;font-size:15px;line-height:1.6;color:#374151;">
+                                The password for <strong>{email}</strong> was updated successfully.
+                            </p>
+                            <p style="margin:0 0 12px 0;font-size:14px;line-height:1.6;color:#6b7280;">
+                                If you did not make this change, reset your password immediately or contact support.
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:20px 32px;border-top:1px solid #eef2f7;font-size:12px;color:#9ca3af;">
+                            LogX Team · support@logxapp.in
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+
+
+PASSWORD_RESET_EMAIL_HTML_TEMPLATE = """"
+<!doctype html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>Reset your password</title>
+</head>
+<body style=\"margin:0;padding:0;background-color:#f6f7fb;font-family:Arial,Helvetica,sans-serif;color:#0b0f19;\">
+    <span style=\"display:none;opacity:0;color:transparent;height:0;width:0;overflow:hidden;\">
+        Reset your LogX password using the link below.
+    </span>
+    <table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;background-color:#f6f7fb;\">
+        <tr>
+            <td align=\"center\" style=\"padding:32px 16px;\">
+                <table role=\"presentation\" width=\"600\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;max-width:600px;width:100%;background-color:#ffffff;border-radius:16px;box-shadow:0 8px 24px rgba(15,23,42,0.08);\">
+                    <tr>
+                        <td style=\"padding:32px 32px 16px 32px;border-bottom:1px solid #eef2f7;\">
+                            <div style=\"font-size:18px;font-weight:700;letter-spacing:0.2px;\">
+                                LogX
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style=\"padding:32px;\">
+                            <h1 style=\"margin:0 0 12px 0;font-size:24px;line-height:1.3;\">Reset your password</h1>
+                            <p style=\"margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#374151;\">
+                                We received a request to reset your LogX password. Use the button below to set a new password.
+                            </p>
+                            <div style=\"margin:24px 0;\">
+                                <a href=\"{link}\" style=\"display:inline-block;background-color:#0b0f19;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:10px;font-size:14px;font-weight:600;\">
+                                    Reset password
+                                </a>
+                            </div>
+                            <p style=\"margin:0 0 8px 0;font-size:13px;line-height:1.6;color:#6b7280;\">
+                                This link will expire in 1 hour. If you did not request a password reset, you can safely ignore this email.
+                            </p>
+                            <p style=\"margin:16px 0 0 0;font-size:12px;line-height:1.6;color:#9ca3af;word-break:break-all;\">
+                                If the button does not work, copy and paste this URL into your browser:<br />
+                                <a href=\"{link}\" style=\"color:#0b0f19;text-decoration:underline;\">{link}</a>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style=\"padding:20px 32px;border-top:1px solid #eef2f7;font-size:12px;color:#9ca3af;\">
+                            LogX Team · support@logxapp.in
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
