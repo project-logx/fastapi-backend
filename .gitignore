@@ -1,7 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
-backend/logx.db
+backend/**
 backend/storage/attachments/
 .streamlit/
 .env
