@@ -1,0 +1,16 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+*.log
+.env
+backend/.env
+backend/*.db
+backend/storage
+backend/__pycache__
+frontend
