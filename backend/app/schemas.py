@@ -98,10 +98,12 @@ class TokenResponse(BaseModel):
 
 class UserPublic(BaseModel):
     id: int
-    first_name: str
-    last_name: str
-    phonenumber: str
+    first_name: str | None = None
+    last_name: str | None = None
+    phonenumber: str | None = None
     email: str
+    auth_provider: str = "local"
+    avatar_url: str | None = None
 
 
 class UserResponse(BaseModel):
@@ -115,3 +117,15 @@ class NewPasswordRequest(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: str = Field(min_length=5, max_length=100)
 
+
+class BrokerAccountResponse(BaseModel):
+    id: int
+    broker_user_id: str
+    user_name: str | None = None
+    email: str | None = None
+    broker: str
+    is_active: bool
+    connected_at: datetime | None = None
+
+    class Config:
+        from_attributes = True

@@ -9,9 +9,7 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi.params import Depends
-from requests import Session
-from app.api.deps import get_db
+from sqlalchemy.orm import Session
 from app.models import PasswordResetToken
 from app.services.send_email import send_password_reset_email, send_verification_email
 
@@ -136,7 +134,7 @@ def create_reset_password_token()->str:
     return token_hash
 
 
-def forgot_password_service(id:str,email:str, db: Session = Depends(get_db)) -> None:
+def forgot_password_service(id: str, email: str, db: Session) -> dict:
 
 	token_hash = create_reset_password_token()
 	db.query(PasswordResetToken).filter(PasswordResetToken.user_id == id).delete()
@@ -153,6 +151,8 @@ def forgot_password_service(id:str,email:str, db: Session = Depends(get_db)) -> 
 	return {
 		"message": "Password Reset Link Sent Successfully!!"
 	}
+
+
 
 
 

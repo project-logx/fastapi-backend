@@ -212,6 +212,23 @@ def _validate_node_state(trade: Trade, node_type: str) -> None:
         raise HTTPException(status_code=409, detail="Exit node allowed only when trade is pending_exit")
 
 
+def _latest_node_for_mid_prefill(trade: Trade) -> TradeNode | None:
+    candidates = [node for node in trade.nodes if node.node_type in {"mid", "entry"}]
+    if not candidates:
+        return None
+
+    fallback_time = datetime.min.replace(tzinfo=UTC)
+    return sorted(
+        candidates,
+        key=lambda item: (
+            1 if item.node_type == "mid" else 0,
+            item.captured_at or item.created_at or fallback_time,
+            item.id,
+        ),
+        reverse=True,
+    )[0]
+
+
 async def _submit_trade_node_internal(
     trade_id: int,
     node_type: str,
@@ -424,6 +441,23 @@ def trade_detail(trade_id: int, db: Session = Depends(get_db)) -> dict:
     return {"data": serialize_trade(trade, include_nodes=True)}
 
 
+@router.get("/trades/{trade_id}/mid")
+def mid_node_context(trade_id: int, db: Session = Depends(get_db)) -> dict:
+    trade = db.query(Trade).filter(Trade.id == trade_id).first()
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    _validate_node_state(trade, "mid")
+
+    prefill_node = _latest_node_for_mid_prefill(trade)
+    return {
+        "data": {
+            "trade": serialize_trade(trade, include_nodes=True),
+            "prefill": serialize_node(prefill_node) if prefill_node else None,
+        }
+    }
+
+
 @router.put("/trades/{trade_id}")
 def update_trade_tags(trade_id: int, payload: TradeUpdateRequest, db: Session = Depends(get_db)) -> dict:
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
@@ -550,6 +584,45 @@ async def submit_entry_node_docs(
 
 @router.post("/trades/{trade_id}/nodes/mid", summary="Capture Mid Node (Docs-Friendly)")
 async def submit_mid_node_docs(
+    trade_id: int,
+    direction: str = Form(...),
+    strategy: str = Form(...),
+    market_context: str = Form(...),
+    confidence: int = Form(5, ge=0, le=10),
+    stress: int = Form(5, ge=0, le=10),
+    focus: int = Form(5, ge=0, le=10),
+    market_clarity: int = Form(5, ge=0, le=10),
+    patience: int = Form(5, ge=0, le=10),
+    note: str | None = Form(default=""),
+    captured_at: datetime | None = Form(default=None),
+    confirm_intervention: bool = Form(default=False),
+    custom_tag_ids: list[int] | None = Form(default=None),
+    files: list[UploadFile] | None = File(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    fixed_tags_payload = {
+        "Direction": direction.strip(),
+        "Strategy": strategy.strip(),
+        "Market": market_context.strip(),
+    }
+    sliders_payload = _slider_payload_from_scalars(confidence, stress, focus, market_clarity, patience)
+    return await _submit_trade_node_internal(
+        trade_id=trade_id,
+        node_type="mid",
+        captured_at=captured_at,
+        fixed_tags_payload=fixed_tags_payload,
+        tags_payload=[],
+        custom_tag_ids_payload=custom_tag_ids or [],
+        sliders_payload=sliders_payload,
+        note=note,
+        files=files,
+        confirm_intervention=confirm_intervention,
+        db=db,
+    )
+
+
+@router.post("/trades/{trade_id}/mid", summary="Capture Mid Node")
+async def submit_mid_node(
     trade_id: int,
     direction: str = Form(...),
     strategy: str = Form(...),

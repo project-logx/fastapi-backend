@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,6 +29,7 @@ from app.api.routes_retrospective import router as retrospective_router
 from app.api.routes_tags import router as tags_router
 from app.api.routes_trades import router as trades_router
 from app.api.routes_auth import router as auth_router
+from app.api.routes_kite_connect import router as kite_connect_router
 from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.services.schema_migrations import apply_lightweight_migrations
@@ -60,6 +62,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret_key,
+    same_site="lax",
+)
 
 app.include_router(health_router, prefix=settings.api_prefix)
 app.include_router(metadata_router, prefix=settings.api_prefix)
@@ -72,3 +79,4 @@ app.include_router(behavior_router, prefix=settings.api_prefix)
 app.include_router(retrospective_router, prefix=settings.api_prefix)
 app.include_router(admin_router, prefix=settings.api_prefix)
 app.include_router(auth_router, prefix=settings.api_prefix)
+app.include_router(kite_connect_router, prefix=settings.api_prefix)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Load .env file if python-dotenv is installed.
 # This allows users to place secrets in backend/.env instead of
@@ -91,6 +92,13 @@ class Settings:
     retrospective_llm_timeout_seconds = int(os.getenv("RETROSPECTIVE_LLM_TIMEOUT_SECONDS", "24"))
     retrospective_default_days = int(os.getenv("RETROSPECTIVE_DEFAULT_DAYS", "7"))
     retrospective_max_trades = int(os.getenv("RETROSPECTIVE_MAX_TRADES", "250"))
+
+    google_client_name = os.getenv("GOOGLE_CLIENT_NAME", "").strip()
+    google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    session_secret_key = os.getenv("SECRET_KEY", "change-me").strip()
+    frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173").strip().rstrip("/")
+    cookie_secure = os.getenv("COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 settings = Settings()

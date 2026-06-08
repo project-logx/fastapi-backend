@@ -87,8 +87,12 @@ class Trade(Base):
     __tablename__ = "trades"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trade_id: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("broker_accounts.id", ondelete="CASCADE"), index=True)
     symbol: Mapped[str] = mapped_column(String(40), index=True)
     product: Mapped[str] = mapped_column(String(20), index=True)
+    instrument_token: Mapped[int] = mapped_column(Integer, index=True)
     direction: Mapped[str] = mapped_column(String(10))
     quantity: Mapped[int] = mapped_column(Integer)
     entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -105,7 +109,8 @@ class Trade(Base):
 
     nodes: Mapped[list[TradeNode]] = relationship("TradeNode", back_populates="trade", cascade="all, delete-orphan")
     embeddings: Mapped[list[NodeEmbedding]] = relationship("NodeEmbedding", back_populates="trade", cascade="all, delete-orphan")
-
+    user: Mapped[User] = relationship("User")
+    account: Mapped[BrokerAccount] = relationship("BrokerAccount")
 
 class TradeNode(Base):
     __tablename__ = "trade_nodes"
@@ -255,15 +260,23 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    phonenumber: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    # phonenumber is nullable so OAuth users (who don't supply one) can register
+    phonenumber: Mapped[str | None] = mapped_column(String(80), unique=True, index=True, nullable=True)
     email: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     first_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    hashed_password: Mapped[str] = mapped_column(String(255))
+    # hashed_password is nullable for OAuth-only users
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # OAuth fields — populated when the user signs in via a third-party provider
+    auth_provider: Mapped[str] = mapped_column(String(40), default="local", index=True)
+    provider_user_id: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
+    
 
 class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
@@ -274,4 +287,21 @@ class PasswordResetToken(Base):
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    user: Mapped[User] = relationship("User")
+
+
+class BrokerAccount(Base):
+    __tablename__ = "broker_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    broker_user_id: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    user_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    broker: Mapped[str] = mapped_column(String(40), default="zerodha", index=True)
+    access_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     user: Mapped[User] = relationship("User")
