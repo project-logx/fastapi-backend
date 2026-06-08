@@ -18,9 +18,9 @@ jobs:
   test:
     name: Test Backend
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: fastapi-backend/backend
+    # defaults:
+    #   run:
+    #     working-directory: fastapi-backend/backend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,8 +29,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: fastapi-backend/backend/requirements-test.txt
 
       - name: Install dependencies
         run: |
