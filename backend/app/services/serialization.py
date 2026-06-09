@@ -192,6 +192,19 @@ def serialize_node(node: TradeNode, api_prefix: str = "/api/v1") -> dict:
     }
 
 
+def serialize_journey(
+    primary_trade: Trade,
+    related_trades: list[Trade],
+    journey_nodes: list[TradeNode],
+    api_prefix: str = "/api/v1",
+) -> dict:
+    data = serialize_trade(primary_trade, include_nodes=False, api_prefix=api_prefix)
+    data["instrument_token"] = primary_trade.instrument_token
+    data["related_trade_ids"] = [trade.id for trade in related_trades]
+    data["nodes"] = [serialize_node(node, api_prefix=api_prefix) for node in journey_nodes]
+    return data
+
+
 def serialize_trade(trade: Trade, include_nodes: bool = False, api_prefix: str = "/api/v1") -> dict:
     data = {
         "id": trade.id,
