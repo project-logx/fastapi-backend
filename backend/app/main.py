@@ -16,7 +16,8 @@ logging.basicConfig(
         logging.FileHandler("backend.log", mode="a")
     ]
 )
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
+
 
 from app.api.routes_admin import router as admin_router
 from app.api.routes_attachments import router as attachments_router

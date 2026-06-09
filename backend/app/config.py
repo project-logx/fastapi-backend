@@ -33,7 +33,12 @@ class Settings:
     api_prefix = "/api/v1"
     source_mode = "mock"
 
+    # database_url = os.getenv("DATABASE_URL", f"sqlite:///{(ROOT_DIR / 'logx.db').as_posix()}") // for local 
     database_url = os.getenv("DATABASE_URL", f"sqlite:///{(ROOT_DIR / 'logx.db').as_posix()}")
+    # Heroku uses postgres:// but SQLAlchemy needs postgresql://
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+
 
     allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "*")
     allowed_origins = [origin.strip() for origin in allowed_origins_raw.split(",") if origin.strip()]
