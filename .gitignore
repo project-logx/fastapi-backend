@@ -1,8 +1,13 @@
 .venv/
 __pycache__/
 *.pyc
-backend/**
-backend/storage/attachments/
+
+# Database files
+*.db
+
+# Storage / uploads
+backend/backend/storage/attachments/
+
 .streamlit/
 .env
 backend/.env
