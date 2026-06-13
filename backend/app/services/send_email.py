@@ -9,6 +9,7 @@ from app.constants import (
     VERIFICATION_EMAIL_HTML_TEMPLATE,
     PASSWORD_RESET_EMAIL_HTML_TEMPLATE
 )
+from app.config import settings
 load_dotenv()
 
 
@@ -120,10 +121,10 @@ def build_password_reset_email_html(token: str) -> str:
 
 
 def verification_link(token: str) -> str:
-    frontend_url=os.getenv("FRONTEND_URL","http://localhost:5173").strip()
+    frontend_url=settings.frontend_base_url
     return f"{frontend_url}/verify?token={token}" 
 
 def password_reset_link(token: str) -> str:
-    frontend_url=os.getenv("FRONTEND_URL","http://localhost:5173").strip()
+    frontend_url=settings.frontend_base_url
     return f"{frontend_url}/reset-password?token={token}"
 

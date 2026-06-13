@@ -292,9 +292,6 @@ class PasswordResetToken(Base):
 
 class BrokerAccount(Base):
     __tablename__ = "broker_accounts"
-    __table_args__ = (
-        UniqueConstraint("broker_user_id", "user_id", name="uq_broker_user_per_user"),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

@@ -164,12 +164,13 @@ def upsert_broker_account(profile: dict[str, Any], db: Session,current_user: Use
 
     user_id = str(profile.get("user_id", ""))
     existing = (
-        db.query(BrokerAccount).filter(BrokerAccount.broker_user_id == user_id, BrokerAccount.user_id == current_user.id).first()
+        db.query(BrokerAccount).filter(BrokerAccount.broker_user_id == user_id).first()
     )
 
     access_token = getattr(kite, "access_token", None)
 
     if existing:
+        existing.user_id = current_user.id
         existing.user_name = profile.get("user_name")
         existing.email = profile.get("email")
         existing.broker = profile.get("broker", "zerodha")
