@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import desc
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_current_user 
 from app.config import settings
 from app.constants import ALLOWED_IMAGE_MIME_TYPES, FIXED_TAGS_BY_CATEGORY, MAX_ATTACHMENTS_PER_NODE, MAX_FILE_SIZE_BYTES, NODE_TYPES, SLIDER_DIMENSIONS, TAG_CATEGORIES_BY_NODE_TYPE, normalize_category_name
 from app.models import Attachment, CustomTag, TagCategory, Trade, TradeNode, TradeStatus
@@ -241,11 +241,12 @@ async def _submit_trade_node_internal(
     files: list[UploadFile] | None,
     confirm_intervention: bool,
     db: Session,
+    current_user,
 ) -> dict:
     if node_type not in NODE_TYPES:
         raise HTTPException(status_code=422, detail=f"type must be one of: {', '.join(NODE_TYPES)}")
 
-    trade = db.query(Trade).filter(Trade.id == trade_id).first()
+    trade = db.query(Trade).filter(Trade.id == trade_id, Trade.user_id == current_user.id).first()
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
 
@@ -385,10 +386,10 @@ async def _submit_trade_node_internal(
 
 
 @router.get("/queue/pending")
-def queue_pending(symbol: str | None = None, limit: int = 100, db: Session = Depends(get_db)) -> dict:
+def queue_pending(symbol: str | None = None, limit: int = 100, db: Session = Depends(get_db), current_user = Depends(get_current_user)) -> dict:
     safe_limit = max(1, min(limit, 500))
 
-    query = db.query(Trade).filter(Trade.status.in_([TradeStatus.PENDING_ENTRY.value, TradeStatus.PENDING_EXIT.value]))
+    query = db.query(Trade).filter(Trade.status.in_([TradeStatus.PENDING_ENTRY.value, TradeStatus.PENDING_EXIT.value]), Trade.user_id == current_user.id)
     if symbol:
         query = query.filter(Trade.symbol == symbol.upper())
 
@@ -423,10 +424,10 @@ def queue_pending(symbol: str | None = None, limit: int = 100, db: Session = Dep
 
 
 @router.get("/trades/active")
-def active_trades(db: Session = Depends(get_db)) -> dict:
+def active_trades(db: Session = Depends(get_db), current_user = Depends(get_current_user)) -> dict:
     rows = (
         db.query(Trade)
-        .filter(Trade.status == TradeStatus.ACTIVE.value)
+        .filter(Trade.status == TradeStatus.ACTIVE.value, Trade.user_id == current_user.id)
         .order_by(desc(Trade.updated_at), desc(Trade.id))
         .all()
     )
@@ -434,16 +435,16 @@ def active_trades(db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/trades/{trade_id}")
-def trade_detail(trade_id: int, db: Session = Depends(get_db)) -> dict:
-    trade = db.query(Trade).filter(Trade.id == trade_id).first()
+def trade_detail(trade_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)) -> dict:
+    trade = db.query(Trade).filter(Trade.id == trade_id, Trade.user_id == current_user.id).first()
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
     return {"data": serialize_trade(trade, include_nodes=True)}
 
 
 @router.get("/trades/{trade_id}/mid")
-def mid_node_context(trade_id: int, db: Session = Depends(get_db)) -> dict:
-    trade = db.query(Trade).filter(Trade.id == trade_id).first()
+def mid_node_context(trade_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)) -> dict:
+    trade = db.query(Trade).filter(Trade.id == trade_id, Trade.user_id == current_user.id).first()
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
 
@@ -459,8 +460,8 @@ def mid_node_context(trade_id: int, db: Session = Depends(get_db)) -> dict:
 
 
 @router.put("/trades/{trade_id}")
-def update_trade_tags(trade_id: int, payload: TradeUpdateRequest, db: Session = Depends(get_db)) -> dict:
-    trade = db.query(Trade).filter(Trade.id == trade_id).first()
+def update_trade_tags(trade_id: int, payload: TradeUpdateRequest, db: Session = Depends(get_db), current_user = Depends(get_current_user)) -> dict:
+    trade = db.query(Trade).filter(Trade.id == trade_id, Trade.user_id == current_user.id).first()
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
 
@@ -560,6 +561,7 @@ async def submit_entry_node_docs(
     custom_tag_ids: list[int] | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ) -> dict:
     fixed_tags_payload = {
         "Direction": direction.strip(),
@@ -599,6 +601,7 @@ async def submit_mid_node_docs(
     custom_tag_ids: list[int] | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
 ) -> dict:
     fixed_tags_payload = {
         "Direction": direction.strip(),
@@ -618,6 +621,7 @@ async def submit_mid_node_docs(
         files=files,
         confirm_intervention=confirm_intervention,
         db=db,
+        current_user=current_user
     )
 
 
@@ -638,6 +642,7 @@ async def submit_mid_node(
     custom_tag_ids: list[int] | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ) -> dict:
     fixed_tags_payload = {
         "Direction": direction.strip(),
@@ -657,6 +662,7 @@ async def submit_mid_node(
         files=files,
         confirm_intervention=confirm_intervention,
         db=db,
+        current_user=current_user,
     )
 
 
@@ -677,6 +683,7 @@ async def submit_exit_node_docs(
     custom_tag_ids: list[int] | None = Form(default=None),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ) -> dict:
     fixed_tags_payload = {
         "Execution": execution.strip(),
@@ -696,4 +703,5 @@ async def submit_exit_node_docs(
         files=files,
         confirm_intervention=confirm_intervention,
         db=db,
+        current_user=current_user,
     )
