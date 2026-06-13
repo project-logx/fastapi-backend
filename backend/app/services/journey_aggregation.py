@@ -71,13 +71,13 @@ def collect_journey_nodes(trades: list[Trade]) -> list[TradeNode]:
     return ordered
 
 
-def list_primary_journey_trades(db: Session, *, symbol: str | None = None, limit: int = 100) -> list[Trade]:
+def list_primary_journey_trades(db: Session, *, symbol: str | None = None, limit: int = 100, current_user) -> list[Trade]:
     """Return one representative completed trade per instrument_token journey."""
     safe_limit = max(1, min(limit, 500))
     query = (
         db.query(Trade)
         .options(joinedload(Trade.nodes))
-        .filter(Trade.status == TradeStatus.COMPLETE.value)
+        .filter(Trade.status == TradeStatus.COMPLETE.value, Trade.user_id == current_user.id)
     )
     if symbol:
         query = query.filter(Trade.symbol == symbol.upper())
