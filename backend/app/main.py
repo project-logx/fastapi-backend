@@ -35,6 +35,7 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.services.schema_migrations import apply_lightweight_migrations
 from app.services.taxonomy import seed_fixed_taxonomy
+from app.db_health import wait_for_database
 
 
 @asynccontextmanager
@@ -43,6 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings.attachments_dir.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     apply_lightweight_migrations(engine)
+    wait_for_database()
     db = SessionLocal()
     try:
         seed_fixed_taxonomy(db)
