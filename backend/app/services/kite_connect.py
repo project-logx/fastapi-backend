@@ -163,6 +163,7 @@ def upsert_broker_account(profile: dict[str, Any], db: Session,current_user: Use
     from app.models import BrokerAccount  # avoid circular imports
 
     user_id = str(profile.get("user_id", ""))
+    # Query by broker_user_id alone — it has a unique index in the DB
     existing = (
         db.query(BrokerAccount).filter(BrokerAccount.broker_user_id == user_id, BrokerAccount.user_id == current_user.id).first()
     )

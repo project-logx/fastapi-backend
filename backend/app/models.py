@@ -295,7 +295,7 @@ class BrokerAccount(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    broker_user_id: Mapped[str] = mapped_column(String(80), index=True)
+    broker_user_id: Mapped[str] = mapped_column(String(80), index=False)
     user_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     email: Mapped[str | None] = mapped_column(String(120), nullable=True)
     broker: Mapped[str] = mapped_column(String(40), default="zerodha", index=True)
