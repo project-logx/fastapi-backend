@@ -523,6 +523,7 @@ async def submit_trade_node(
     confirm_intervention: bool = Form(default=False),
     files: list[UploadFile] | None = File(default=None),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ) -> dict:
     node_type = type.strip().lower()
     parsed_fixed_tags = _json_field(fixed_tags, None)
@@ -541,6 +542,7 @@ async def submit_trade_node(
         files=files,
         confirm_intervention=confirm_intervention,
         db=db,
+        current_user=current_user
     )
 
 
@@ -581,6 +583,7 @@ async def submit_entry_node_docs(
         files=files,
         confirm_intervention=confirm_intervention,
         db=db,
+        current_user=current_user
     )
 
 
