@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -22,8 +22,8 @@ router = APIRouter(tags=["kite-connect"], prefix="/kite_connect")
 def login(current_user: User = Depends(get_current_user)):
     """
     Return the Kite login redirect URL.
-    The URL includes a signed `state` parameter encoding the current user's ID,
-    so the callback can identify who initiated the OAuth flow.
+    Records a pending OAuth flow server-side so the callback can identify
+    which user initiated the login (Zerodha doesn't echo back state params).
     """
     return {"redirect_url": kite_service.get_login_url(current_user.id)}
 
@@ -31,21 +31,21 @@ def login(current_user: User = Depends(get_current_user)):
 @router.get("/callback")
 def callback(
     request_token: str,
-    state: str = Query(default=""),
     db: Session = Depends(get_db),
 ):
     """
     Handle Kite OAuth callback.
-    - Decodes the signed `state` to identify the user
+    - Identifies the user from the server-side pending auth record
     - Generates a session and stores the access token per-user
     - Upserts the broker account details in the DB
     """
-    # Decode the signed state to get the user_id
-    user_id = kite_service.decode_state(state)
+    # Identify which user initiated this OAuth flow
+    user_id = kite_service.get_pending_auth_user()
+
     if user_id is None:
-        print(f"Kite callback error: invalid or expired state token")
+        print("Kite callback error: no pending auth found (expired or missing)")
         return RedirectResponse(
-            url=f"{settings.frontend_base_url}/dashboard?kite_error=invalid_state"
+            url=f"{settings.frontend_base_url}/dashboard?kite_error=no_pending_auth"
         )
 
     try:

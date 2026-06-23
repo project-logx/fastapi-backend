@@ -33,11 +33,17 @@ class KiteSessionManager:
     In-memory dict: { user_id (int) -> KiteConnect instance }
     On first access for a user, if a valid access_token exists in the
     broker_accounts table, the session is automatically restored.
+
+    Also tracks pending OAuth flows so the callback can identify which
+    user initiated the login (since Zerodha doesn't echo back state params).
     """
 
     def __init__(self, api_key: str):
         self._api_key = api_key
         self._sessions: dict[int, kiteconnect_lib.KiteConnect] = {}
+        # Tracks pending OAuth: { user_id -> timestamp }
+        # Used to identify the most recent user who initiated login
+        self._pending_auth: dict[int, float] = {}
 
     def get_kite(self, user_id: int) -> kiteconnect_lib.KiteConnect:
         """Return (or create) the KiteConnect instance for `user_id`."""
@@ -56,6 +62,33 @@ class KiteSessionManager:
         inst = self._sessions.pop(user_id, None)
         if inst and hasattr(inst, "access_token"):
             inst.access_token = None
+
+    def store_pending_auth(self, user_id: int) -> None:
+        """Record that this user initiated a Kite OAuth flow."""
+        self._pending_auth[user_id] = time.time()
+        # Clean up expired entries (older than 10 minutes)
+        cutoff = time.time() - STATE_TTL_SECONDS
+        expired = [uid for uid, ts in self._pending_auth.items() if ts < cutoff]
+        for uid in expired:
+            self._pending_auth.pop(uid, None)
+
+    def retrieve_pending_auth(self) -> int | None:
+        """
+        Return the user_id of the most recent pending OAuth flow.
+        Removes the entry after retrieval (one-time use).
+        Returns None if no valid pending auth exists.
+        """
+        if not self._pending_auth:
+            return None
+        cutoff = time.time() - STATE_TTL_SECONDS
+        # Find the most recent non-expired entry
+        valid = {uid: ts for uid, ts in self._pending_auth.items() if ts >= cutoff}
+        if not valid:
+            return None
+        # Get the most recently initiated auth
+        user_id = max(valid, key=valid.get)  # type: ignore
+        del self._pending_auth[user_id]
+        return user_id
 
 
 # Module-level singleton manager (NOT a singleton kite instance)
@@ -131,15 +164,21 @@ def decode_state(state: str) -> int | None:
 
 def get_login_url(user_id: int) -> str:
     """
-    Return the Kite login redirect URL with a signed `state` parameter
-    that encodes the user_id so the callback knows who initiated the flow.
+    Return the Kite login redirect URL.
+    Also records the pending OAuth flow so the callback can identify the user
+    (Zerodha does not echo back custom query parameters or state).
     """
+    _manager.store_pending_auth(user_id)
     kite = _manager.get_kite(user_id)
-    base_url = kite.login_url()
-    state = encode_state(user_id)
-    # Kite login URL already has query params; append state
-    separator = "&" if "?" in base_url else "?"
-    return f"{base_url}{separator}state={state}"
+    return kite.login_url()
+
+
+def get_pending_auth_user() -> int | None:
+    """
+    Retrieve the user_id of the most recent pending Kite OAuth flow.
+    One-time use: the entry is removed after retrieval.
+    """
+    return _manager.retrieve_pending_auth()
 
 
 def generate_session(request_token: str, user_id: int, db: Session) -> dict:
