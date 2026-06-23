@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -19,20 +19,49 @@ router = APIRouter(tags=["kite-connect"], prefix="/kite_connect")
 # ---------------------------------------------------------------------------
 
 @router.get("/")
-def login():
-    """Return the Kite login redirect URL."""
-    return {"redirect_url": kite_service.get_login_url()}
+def login(current_user: User = Depends(get_current_user)):
+    """
+    Return the Kite login redirect URL.
+    The URL includes a signed `state` parameter encoding the current user's ID,
+    so the callback can identify who initiated the OAuth flow.
+    """
+    return {"redirect_url": kite_service.get_login_url(current_user.id)}
 
 
 @router.get("/callback")
-def callback(request_token: str, db: Session = Depends(get_db)):
+def callback(
+    request_token: str,
+    state: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
     """
     Handle Kite OAuth callback.
-    - Generates a session and stores the access token.
-    - Upserts the broker account details in the DB.
+    - Decodes the signed `state` to identify the user
+    - Generates a session and stores the access token per-user
+    - Upserts the broker account details in the DB
     """
+    # Decode the signed state to get the user_id
+    user_id = kite_service.decode_state(state)
+    if user_id is None:
+        print(f"Kite callback error: invalid or expired state token")
+        return RedirectResponse(
+            url=f"{settings.frontend_base_url}/dashboard?kite_error=invalid_state"
+        )
+
     try:
-        session_data = kite_service.generate_session(request_token)
+        # Generate session for this specific user
+        session_data = kite_service.generate_session(request_token, user_id, db)
+
+        # Look up the user to pass to upsert_broker_account
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            # Fetch the Kite profile to store broker account info
+            profile = kite_service.get_profile(user_id, db)
+            kite_service.upsert_broker_account(
+                profile, db, user,
+                access_token=session_data.get("access_token")
+            )
+
         return RedirectResponse(
             url=f"{settings.frontend_base_url}/dashboard?kite_connected=true"
         )
@@ -44,16 +73,22 @@ def callback(request_token: str, db: Session = Depends(get_db)):
 
 
 @router.get("/status")
-def status():
-    """Return Kite connection status."""
-    return kite_service.get_status()
+def status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return Kite connection status for the current user."""
+    return kite_service.get_status(current_user.id, db)
 
 
 @router.post("/disconnect")
-def disconnect():
-    """Clear the Kite access token."""
+def disconnect(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Clear the Kite access token for the current user."""
     try:
-        return kite_service.disconnect()
+        return kite_service.disconnect(current_user.id, db)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -64,9 +99,9 @@ def disconnect():
 
 @router.get("/profile")
 def profile(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Fetch the Kite user profile."""
+    """Fetch the Kite user profile for the current user."""
     try:
-        user_profile = kite_service.get_profile()
+        user_profile = kite_service.get_profile(current_user.id, db)
         # upsert broker account
         kite_service.upsert_broker_account(user_profile, db, current_user)
         return {"data": user_profile}
@@ -75,10 +110,13 @@ def profile(db: Session = Depends(get_db), current_user: User = Depends(get_curr
 
 
 @router.get("/orders")
-def orders(current_user: User = Depends(get_current_user)):
-    """Fetch all Kite orders."""
+def orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch all Kite orders for the current user."""
     try:
-        user_orders = kite_service.get_orders()
+        user_orders = kite_service.get_orders(current_user.id, db)
         return {"data": user_orders}
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Failed to fetch orders: {str(e)}")
@@ -91,9 +129,9 @@ def trades(db: Session = Depends(get_db), current_user: User = Depends(get_curre
     Returns the raw trade data along with the count of newly inserted records.
     """
     try:
-        user_trades = kite_service.get_trades()
-        profile = kite_service.get_profile()
-        inserted = kite_service.upsert_trades_to_db(user_trades,profile, db, current_user)
+        user_trades = kite_service.get_trades(current_user.id, db)
+        profile = kite_service.get_profile(current_user.id, db)
+        inserted = kite_service.upsert_trades_to_db(user_trades, profile, db, current_user)
         return {
             "data": user_trades,
             "inserted_count": inserted,
@@ -115,17 +153,20 @@ def get_broker_account(db: Session = Depends(get_db), current_user: User = Depen
     """
     from app.models import BrokerAccount
 
-    status_info = kite_service.get_status()
+    status_info = kite_service.get_status(current_user.id, db)
     if not status_info.get("connected"):
         raise HTTPException(status_code=401, detail="Not connected to Kite. Please login first.")
 
     try:
-        profile = kite_service.get_profile()
+        profile = kite_service.get_profile(current_user.id, db)
         user_id = str(profile.get("user_id", ""))
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Failed to fetch profile: {str(e)}")
 
-    account = db.query(BrokerAccount).filter(BrokerAccount.broker_user_id == user_id).first()
+    account = db.query(BrokerAccount).filter(
+        BrokerAccount.broker_user_id == user_id,
+        BrokerAccount.user_id == current_user.id,
+    ).first()
     if not account:
         # Auto-upsert if not yet in DB
         account = kite_service.upsert_broker_account(profile, db, current_user)
@@ -139,12 +180,12 @@ def sync_broker_account(db: Session = Depends(get_db), current_user: User = Depe
     Sync the broker account details from Kite profile into the database.
     Creates the record if it doesn't exist, updates it otherwise.
     """
-    status_info = kite_service.get_status()
+    status_info = kite_service.get_status(current_user.id, db)
     if not status_info.get("connected"):
         raise HTTPException(status_code=401, detail="Not connected to Kite. Please login first.")
 
     try:
-        profile = kite_service.get_profile()
+        profile = kite_service.get_profile(current_user.id, db)
         account = kite_service.upsert_broker_account(profile, db, current_user)
         return account
     except Exception as e:
