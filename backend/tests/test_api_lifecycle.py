@@ -224,3 +224,60 @@ def test_attachment_endpoints_and_immutability(client: TestClient) -> None:
 
     blocked_delete = client.delete(f"/api/v1/attachments/{exit_attachment_id}")
     assert blocked_delete.status_code == 409
+
+
+def test_journelled_trades_endpoint(client: TestClient) -> None:
+    # 1. Initially, no journalled trades should be returned (as no nodes exist)
+    response = client.get("/api/v1/trades/journelled")
+    assert response.status_code == 200
+    assert response.json()["data"] == []
+
+    # 2. Inject a pending entry trade
+    _inject_entry(client)
+    trade_id = _first_pending_entry_id(client)
+
+    # 3. Create a custom tag to check inclusion of custom tags in tags list
+    custom_tag_id = _create_custom_tag(client, name="custom_conviction")
+
+    # 4. Submit an entry node
+    entry_response = client.post(
+        f"/api/v1/trades/{trade_id}/nodes",
+        data=_capture_payload("entry", custom_tag_ids=[custom_tag_id], tags=["Long", "Breakout", "trending day"]),
+    )
+    assert entry_response.status_code == 200
+
+    # 5. Check /trades/journelled again. It should now contain our trade with correct fields
+    response = client.get("/api/v1/trades/journelled")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+    
+    trade_item = data[0]
+    assert trade_item["id"] == trade_id
+    assert trade_item["trade_name"] == "NIFTY24APR-FUT"
+    # Should include both fixed tag values and custom tag name:
+    # "Long", "Breakout", "trending day", "custom_conviction"
+    expected_tags = sorted(["Long", "Breakout", "trending day", "custom_conviction"])
+    assert trade_item["tags"] == expected_tags
+    assert trade_item["node_type"] == "entry"
+    assert trade_item["node_types"] == ["entry"]
+
+    # 6. Add a mid node with different tags
+    mid_response = client.post(
+        f"/api/v1/trades/{trade_id}/nodes",
+        data=_capture_payload("mid", tags=["Short", "Reversal", "Range day"]),
+    )
+    assert mid_response.status_code == 200
+
+    # 7. Check /trades/journelled again. It should contain mid and updated tags
+    response = client.get("/api/v1/trades/journelled")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+    
+    trade_item = data[0]
+    assert trade_item["trade_name"] == "NIFTY24APR-FUT"
+    expected_tags = sorted(["Long", "Breakout", "trending day", "custom_conviction", "Short", "Reversal", "Range day"])
+    assert trade_item["tags"] == expected_tags
+    assert trade_item["node_type"] == "mid"
+    assert trade_item["node_types"] == ["entry", "mid"]

@@ -432,7 +432,57 @@ def active_trades(db: Session = Depends(get_db), current_user = Depends(get_curr
         .all()
     )
     return {"data": [serialize_trade(item) for item in rows], "meta": {"count": len(rows)}}
+    
+@router.get("/trades/journelled")
+def get_journelled_trades(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """
+    Get all journelled trades for the current user
+    """
+    trades = (
+        db.query(Trade)
+        .options(joinedload(Trade.nodes).joinedload(TradeNode.custom_tags))
+        .filter(Trade.user_id == current_user.id)
+        .all()
+    )
 
+    serialized_trades = []
+    for trade in trades:
+        # A trade is considered journalled if it has at least one associated node
+        if not trade.nodes:
+            continue
+
+        # Sort nodes chronologically
+        sorted_nodes = sorted(
+            trade.nodes,
+            key=lambda item: (item.captured_at or item.created_at, item.id)
+        )
+
+        # Collect unique tags from all nodes (fixed_tags values + custom_tags names)
+        tags_set = set()
+        for node in sorted_nodes:
+            if node.fixed_tags:
+                for tag_val in node.fixed_tags.values():
+                    if tag_val:
+                        tags_set.add(str(tag_val).strip())
+            for custom_tag in node.custom_tags:
+                if custom_tag.name:
+                    tags_set.add(custom_tag.name.strip())
+
+        node_types = [node.node_type for node in sorted_nodes]
+        latest_node_type = node_types[-1] if node_types else None
+
+        # Serialize using the existing helper
+        trade_data = serialize_trade(trade, include_nodes=True)
+
+        # Inject requested helper fields
+        trade_data["trade_name"] = trade.symbol
+        trade_data["tags"] = sorted(list(tags_set))
+        trade_data["node_type"] = latest_node_type
+        trade_data["node_types"] = node_types
+
+        serialized_trades.append(trade_data)
+
+    return {"data": serialized_trades}
 
 @router.get("/trades/{trade_id}")
 def trade_detail(trade_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)) -> dict:
@@ -708,3 +758,4 @@ async def submit_exit_node_docs(
         db=db,
         current_user=current_user,
     )
+
