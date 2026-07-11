@@ -40,23 +40,23 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ${{secrets.DOCKER_USERNAME}}/logx-backend:latest
-    deploy:
-      name: Deploy to Digital Ocean Droplet
-      runs-on: ubuntu-latest
-      needs: build
-      steps: 
-        - name: Checkout the code
-          uses: actions/checkout@v4
-        - name: Deploy to Digital Ocean Droplet via SSH
-          uses: appleboy/ssh-action@v1.0.3
-          with:
-            host: ${{ secrets.EC2_HOST }}
-            username: ${{ secrets.EC2_USERNAME }}
-            key: ${{ secrets.EC2_SSH_KEY }}
-            port: 22
-            script: |
-              cd ~/logx/fastapi-backend
-              docker compose pull
-              docker compose up -d --force-recreate 
-              docker image prune -af
+  deploy:
+    name: Deploy to Digital Ocean Droplet
+    runs-on: ubuntu-latest
+    needs: build
+    steps: 
+      - name: Checkout the code
+        uses: actions/checkout@v4
+      - name: Deploy to Digital Ocean Droplet via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            cd ~/logx/fastapi-backend
+            docker compose pull
+            docker compose up -d --force-recreate 
+            docker image prune -af
               
