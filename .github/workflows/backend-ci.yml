@@ -15,6 +15,7 @@ on:
       - "requirements.txt"
       - "Dockerfile"
       - ".github/workflows/backend-ci.yml"
+  workflow-dispatch: 
 
 jobs:
   build:
