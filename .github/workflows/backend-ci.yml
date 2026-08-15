@@ -47,6 +47,20 @@ jobs:
     steps: 
       - name: Checkout the code
         uses: actions/checkout@v4
+
+      # - name: Create .env file from secret
+      #   run: echo "${{ secrets.BACKEND_ENV }}" > .env
+
+      - name: Copy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          source: "docker-compose.yml"
+          target: "~/logx/fastapi-backend/"
+
       - name: Deploy to Digital Ocean Droplet via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -57,6 +71,6 @@ jobs:
           script: |
             cd ~/logx/fastapi-backend
             docker compose pull
-            docker compose up -d --force-recreate 
+            docker compose up -d --force-recreate
             docker image prune -af
-              
+    
