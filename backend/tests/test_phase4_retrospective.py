@@ -206,3 +206,13 @@ def test_retrospective_run_handles_empty_timeframe(client: TestClient) -> None:
     assert data["report"]["trade_count"] == 0
     assert isinstance(data["report"]["report_markdown"], str)
     assert data["report"]["report_markdown"].strip()
+
+
+def test_retrospective_enforces_a_minimum_seven_day_tracking_window(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/behavior/retrospective/run",
+        params={"days": 1, "profile_key": "global"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["report"]["timeframe_days"] == 7

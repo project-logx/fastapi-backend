@@ -221,7 +221,8 @@ class TimeframeTradeRetriever:
         max_trades: int,
     ) -> None:
         self.db = db
-        self.timeframe_days = max(1, min(int(timeframe_days), 90))
+        # Keep this guard here so non-HTTP callers cannot use less than a full week.
+        self.timeframe_days = max(7, min(int(timeframe_days), 90))
         self.profile_key = (profile_key or "global").strip() or "global"
         self.max_trades = max(1, min(int(max_trades), 1000))
         self.period_end = datetime.now(UTC)

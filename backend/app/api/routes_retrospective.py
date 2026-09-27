@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["behavior"])
 
+MIN_RETROSPECTIVE_DAYS = 7
+MAX_RETROSPECTIVE_DAYS = 90
+
 
 @router.get("/debug/llm-test")
 def debug_llm_test() -> dict:
@@ -90,7 +93,8 @@ def run_retrospective(
     include_histories: bool = False,
     db: Session = Depends(get_db),
 ) -> dict:
-    safe_days = max(1, min(days, 90))
+    # A shorter window is too noisy to be useful for behavioral tracking.
+    safe_days = max(MIN_RETROSPECTIVE_DAYS, min(days, MAX_RETROSPECTIVE_DAYS))
     safe_profile_key = (profile_key or "global").strip() or "global"
 
     logger.info(f"=== /behavior/retrospective/run called: days={safe_days}, profile={safe_profile_key} ===")
