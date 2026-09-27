@@ -51,26 +51,26 @@ jobs:
       # - name: Create .env file from secret
       #   run: echo "${{ secrets.BACKEND_ENV }}" > .env
 
-      - name: Copy files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          password: ${{ secrets.EC2_SSH_PASSWORD }}
-          port: 22
-          source: "docker-compose.yml"
-          target: "~/logx/fastapi-backend/"
+      # - name: Copy files to server
+      #   uses: appleboy/scp-action@v0.1.7
+      #   with:
+      #     host: ${{ secrets.EC2_HOST }}
+      #     username: ${{ secrets.EC2_USERNAME }}
+      #     password: ${{ secrets.EC2_SSH_PASSWORD }}
+      #     port: 22
+      #     source: "docker-compose.yml"
+      #     target: "~/logx/fastapi-backend/"
 
-      - name: Deploy to Digital Ocean Droplet via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          password: ${{ secrets.EC2_SSH_PASSWORD }}
-          port: 22
-          script: |
-            cd ~/logx/fastapi-backend
-            docker compose pull
-            docker compose up -d --force-recreate
-            docker image prune -af
+      # - name: Deploy to Digital Ocean Droplet via SSH
+      #   uses: appleboy/ssh-action@v1.0.3
+      #   with:
+      #     host: ${{ secrets.EC2_HOST }}
+      #     username: ${{ secrets.EC2_USERNAME }}
+      #     password: ${{ secrets.EC2_SSH_PASSWORD }}
+      #     port: 22
+      #     script: |
+      #       cd ~/logx/fastapi-backend
+      #       docker compose pull
+      #       docker compose up -d --force-recreate
+      #       docker image prune -af
     

@@ -9,4 +9,6 @@ brevo-python
 authlib>=1.3.2
 itsdangerous
 kiteconnect
-psycopg
+# Psycopg 3 needs a libpq implementation. The binary extra bundles one, which
+# is required by the slim Python image used for the Render Docker deployment.
+psycopg[binary]>=3.2
